@@ -1,0 +1,17 @@
+{
+  "name": "pi-codex-usage",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "description": "Persistent Codex usage widget for Pi",
+  "pi": {
+    "extensions": ["./extensions/codex-usage.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  }
+}
