@@ -3,13 +3,13 @@
 A small [Pi](https://pi.dev/) extension that shows Codex subscription usage in a right-aligned line above the editor.
 
 ```text
-W31% R4d23h D13.9%
-W31% R4d23h D13.9% 5H82% R2h15m H8.0%
+W31% R4d23h B13.9%/24h
+W31% R4d23h B13.9%/24h 5H82% R2h15m B8.0%/1h
 ```
 
 - `W` / `5H`: weekly / 5-hour allowance used. The 5-hour group appears only if reported.
 - `R`: time until that allowance resets.
-- `D` / `H`: allowance remaining (`100% − W` / `100% − 5H`) divided by time until that window resets, scaled to 24 hours / one hour. Rounded down and capped at 100% for display, these are planning rates—not provider limits or guarantees about future use.
+- `B…/24h` / `B…/1h`: remaining allowance (`100% − W` / `100% − 5H`) budgeted over the time until reset, per 24 hours / one hour. Rounded down and capped at 100% for display, these are planning rates—not provider limits or guarantees about future use.
 
 The line stays present for `openai-codex` models, even at low usage. It remains blank while data is unavailable and disappears for other providers. Usage turns yellow above 70% and red above 90%; the other figures stay dim.
 
