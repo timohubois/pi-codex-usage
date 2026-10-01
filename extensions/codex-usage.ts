@@ -154,7 +154,7 @@ export default function (pi: ExtensionAPI) {
 		if (snapshot.weekly) {
 			const rate = pace(snapshot.weekly, now);
 			if (rate !== undefined) {
-				parts.push({ text: `B${displayPace(rate)}/24h` });
+				parts.push({ text: `≈${displayPace(rate)}/24h` });
 			}
 		}
 		if (snapshot.fiveHour) {
@@ -169,7 +169,7 @@ export default function (pi: ExtensionAPI) {
 				parts.push({ text: `R${countdown(fiveHour.resetAt, now)}` });
 				const rate = pace(fiveHour, now, "hour");
 				if (rate !== undefined) {
-					parts.push({ text: `B${displayPace(rate)}/1h` });
+					parts.push({ text: `≈${displayPace(rate)}/1h` });
 				}
 			}
 		}

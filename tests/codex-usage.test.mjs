@@ -124,7 +124,7 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	handlers.get("session_start")({}, ctx);
 	assert.deepEqual(widget?.render(120), [" ".repeat(120)]); // Reserve an empty row before the first fetch.
 	await flush();
-	assert.match(status(), /^W31% R\d+d\d+h B\d+\.\d%\/24h$/);
+	assert.match(status(), /^W31% R\d+d\d+h ≈\d+\.\d%\/24h$/);
 	assert.ok(widget.render(120)[0].startsWith(" "));
 	assert.equal(widget.render(12)[0].length, 12);
 	assert.equal(requests, 1);
@@ -149,7 +149,7 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	assert.equal(requests, 2); // Adjacent responses coalesce into one delayed request.
 	await afterDebounce();
 	assert.equal(requests, 3);
-	assert.match(status(), /^\[warning\]W71% R\d+d\d+h B\d+\.\d%\/24h \[warning\]5H82% R\d+h\d+m B\d+\.\d%\/1h$/);
+	assert.match(status(), /^\[warning\]W71% R\d+d\d+h ≈\d+\.\d%\/24h \[warning\]5H82% R\d+h\d+m ≈\d+\.\d%\/1h$/);
 	assert.equal(widget.render(120)[0].replaceAll("[warning]", "").length, 120);
 	assert.ok(widget.render(120)[0].startsWith(" ")); // Right-aligned at the available width.
 	assert.equal(widget.render(12)[0].replaceAll("[warning]", "").length, 12);
@@ -161,7 +161,7 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	handlers.get("message_end")({ message: { role: "assistant" } }, ctx);
 	await afterDebounce();
 	assert.equal(requests, 4);
-	assert.match(status(), /\[error\]W91% R\d+d\d+h B\d+\.\d%\/24h \[error\]5H100% R\d+h\d+m B0\.0%\/1h$/);
+	assert.match(status(), /\[error\]W91% R\d+d\d+h ≈\d+\.\d%\/24h \[error\]5H100% R\d+h\d+m ≈0\.0%\/1h$/);
 	handlers.get("message_end")({ message: { role: "user" } }, ctx);
 	await flush();
 	assert.equal(requests, 4);
@@ -183,13 +183,13 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	fiveHourUsed = 10;
 	handlers.get("message_end")({ message: { role: "assistant" } }, ctx);
 	await afterDebounce();
-	assert.match(status(), /^W31% R\d+d\d+h B\d+\.\d%\/24h 5H10% R\d+h\d+m B\d+\.\d%\/1h$/);
+	assert.match(status(), /^W31% R\d+d\d+h ≈\d+\.\d%\/24h 5H10% R\d+h\d+m ≈\d+\.\d%\/1h$/);
 	Date.now = () => fiveHourResetAt - 30 * 60_000;
 	tick();
-	assert.match(status(), /5H10% R30m B100\.0%\/1h$/); // 180%/h is capped at 100%/h.
+	assert.match(status(), /5H10% R30m ≈100\.0%\/1h$/); // 180%/h is capped at 100%/h.
 	Date.now = () => weeklyResetAt - day / 2;
 	tick();
-	assert.match(status(), /^W31% R12h0m B100\.0%\/24h 5H\?$/); // 138%/d is capped at 100%/d.
+	assert.match(status(), /^W31% R12h0m ≈100\.0%\/24h 5H\?$/); // 138%/d is capped at 100%/d.
 	Date.now = () => weeklyResetAt + 1_000;
 	tick();
 	assert.equal(status(), "W? 5H?"); // Never treat an expired weekly window as current.
