@@ -3,12 +3,13 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { UsageSnapshot, UsageWindow } from "../extensions/codex-usage.ts";
+import { HISTORY_MS, withRecentRates, type UsageSample } from "./pacing.ts";
 
 export const POLL_MS = 5 * 60_000;
 export const WORK_COOLDOWN_MS = 60_000;
 const LOCK_MS = 60_000; // Longer than the usage request timeout.
 const MAX_AGE_MS = POLL_MS + 60_000;
-type CacheRecord = { attemptedAt: number; fetchedAt?: number; snapshot?: UsageSnapshot };
+type CacheRecord = { attemptedAt: number; fetchedAt?: number; snapshot?: UsageSnapshot; history?: UsageSample[] };
 
 export function cacheDirectory(): string {
 	return join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "pi-codex-usage");
@@ -19,16 +20,19 @@ function validWindow(window: UsageWindow): boolean {
 		Number.isFinite(window.resetAt) && Number.isFinite(window.durationSeconds) && window.durationSeconds > 0;
 }
 
+function validSnapshot(snapshot: UsageSnapshot): boolean {
+	return !!snapshot && typeof snapshot === "object" && !!(snapshot.weekly || snapshot.fiveHour) &&
+		(!snapshot.weekly || validWindow(snapshot.weekly)) && (!snapshot.fiveHour || validWindow(snapshot.fiveHour));
+}
+
 async function readCache(path: string): Promise<CacheRecord | undefined> {
 	try {
 		const record = JSON.parse(await readFile(path, "utf8")) as CacheRecord;
 		if (!record || !Number.isFinite(record.attemptedAt)) return undefined;
-		if (record.snapshot && (
-			!Number.isFinite(record.fetchedAt) ||
-			(!record.snapshot.weekly && !record.snapshot.fiveHour) ||
-			(record.snapshot.weekly && !validWindow(record.snapshot.weekly)) ||
-			(record.snapshot.fiveHour && !validWindow(record.snapshot.fiveHour))
-		)) return undefined;
+		if (record.snapshot && (!Number.isFinite(record.fetchedAt) || !validSnapshot(record.snapshot))) return undefined;
+		record.history = Array.isArray(record.history) ? record.history.filter((sample) =>
+			sample && Number.isFinite(sample.at) && validSnapshot(sample.snapshot),
+		).sort((a, b) => a.at - b.at).slice(-31) : undefined;
 		return record;
 	} catch {
 		return undefined;
@@ -39,7 +43,7 @@ function cachedSnapshot(record: CacheRecord | undefined, now: number): UsageSnap
 	if (!record?.snapshot || record.fetchedAt === undefined || now < record.fetchedAt || now - record.fetchedAt > MAX_AGE_MS) {
 		return undefined;
 	}
-	return record.snapshot;
+	return withRecentRates(record.snapshot, record.history ?? [], record.fetchedAt);
 }
 
 async function saveCache(path: string, record: CacheRecord): Promise<void> {
@@ -100,8 +104,12 @@ export async function sharedUsage(
 		await saveCache(path, { ...record, attemptedAt: now });
 		try {
 			const snapshot = await fetchUsage();
-			await saveCache(path, { attemptedAt: now, fetchedAt: now, snapshot });
-			return snapshot;
+			const previous = record?.history ?? (record?.snapshot && record.fetchedAt !== undefined
+				? [{ at: record.fetchedAt, snapshot: record.snapshot }] : []);
+			const history = [...previous.filter((sample) => sample.at < now && now - sample.at <= HISTORY_MS), { at: now, snapshot }].slice(-31);
+			const next = { attemptedAt: now, fetchedAt: now, snapshot, history };
+			await saveCache(path, next);
+			return cachedSnapshot(next, now);
 		} catch {
 			await saveCache(path, { attemptedAt: now });
 			return undefined;

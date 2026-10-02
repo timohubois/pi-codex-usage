@@ -88,3 +88,22 @@ test("in-flight requests do not leave a fresh-looking old snapshot forever", asy
 	}));
 	assert.equal(await sharedUsage("account", async () => assert.fail("Still in cooldown"), { directory, now: clock }), undefined);
 });
+
+test("recent rates are persisted and reused across sessions without extra requests", async (t) => {
+	const directory = await temporary(t);
+	const start = Date.now();
+	let requests = 0;
+	const short = { usedPercent: 37.5, resetAt: start + 3_600_000, durationSeconds: 18000 };
+	await sharedUsage("account", async () => { requests++; return { fiveHour: short }; }, { directory, now: start });
+	const fetched = await sharedUsage("account", async () => {
+		requests++;
+		return { fiveHour: { ...short, usedPercent: 40 } };
+	}, { directory, now: start + POLL_MS });
+	assert.equal(fetched.fiveHour.recentRate.percentPerHour, 30);
+	const reused = await sharedUsage("account", async () => assert.fail("Must reuse shared history"), { directory, now: start + POLL_MS + 60_000 });
+	assert.deepEqual(reused, fetched);
+	assert.equal(requests, 2);
+	const [filename] = await readdir(directory);
+	const cache = JSON.parse(await readFile(join(directory, filename), "utf8"));
+	assert.equal(cache.history.length, 2);
+});

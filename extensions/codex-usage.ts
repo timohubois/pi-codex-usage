@@ -1,11 +1,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sharedUsage } from "../lib/shared-usage.ts";
+import { actionHint } from "../lib/pacing.ts";
 
 // The endpoint is used by ChatGPT but is not a documented public API.
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const WIDGET_KEY = "codex-usage";
 const TICK_MS = 60_000;
-export type UsageWindow = { usedPercent: number; resetAt: number; durationSeconds: number };
+export type UsageWindow = {
+	usedPercent: number;
+	resetAt: number;
+	durationSeconds: number;
+	recentRate?: { percentPerHour: number; observedAt: number };
+};
 export type UsageSnapshot = { weekly?: UsageWindow; fiveHour?: UsageWindow };
 type MetricPart = { text: string; color?: "warning" | "error" };
 
@@ -84,7 +90,7 @@ export function budgetBalance(window: UsageWindow, now: number): number | undefi
 }
 
 export function displayBalance(balance: number): string {
-	const magnitude = Number(Math.abs(balance).toFixed(2));
+	const magnitude = Math.round(Math.abs(balance));
 	if (magnitude === 0) return "B0%"; // Avoid signed zero after rounding.
 	return `B${balance < 0 ? "-" : "+"}${magnitude}%`;
 }
@@ -126,7 +132,7 @@ export default function (pi: ExtensionAPI) {
 			return {
 				invalidate() {},
 				render(width: number): string[] {
-					// Metric labels and values are ASCII, so their lengths equal terminal columns.
+					// Labels, digits, ≈, and • each occupy one terminal column.
 					// Style after measuring to keep ANSI escapes out of the width calculation.
 					let remaining = Math.max(0, width);
 					let line = "";
@@ -152,6 +158,7 @@ export default function (pi: ExtensionAPI) {
 			if (!window) continue;
 			const balance = budgetBalance(window, now);
 			if (balance === undefined) continue; // Hide expired windows until fresh data arrives.
+			if (parts.length) parts.push({ text: "•" });
 			parts.push({
 				text: `${label}${window.usedPercent}%`,
 				color: window.usedPercent > 90 ? "error" : window.usedPercent > 70 ? "warning" : undefined,
@@ -159,6 +166,8 @@ export default function (pi: ExtensionAPI) {
 			parts.push({ text: `R${countdown(window.resetAt, now)}` });
 			const text = displayBalance(balance);
 			parts.push({ text, color: text.startsWith("B-") ? "warning" : undefined });
+			const hint = actionHint(window, balance, now);
+			if (hint) parts.push({ text: hint });
 		}
 		return parts.length ? parts : undefined;
 	}

@@ -50,8 +50,8 @@ test("both windows compare usage with elapsed allowance", () => {
 	}
 });
 
-test("balance display has a sign, up to two decimals, and no signed zero", () => {
-	for (const [value, text] of [[0, "B0%"], [10, "B+10%"], [-30, "B-30%"], [0.25, "B+0.25%"], [-2.42857, "B-2.43%"], [1.5, "B+1.5%"], [0.004, "B0%"], [-0.004, "B0%"], [-0, "B0%"], [-100, "B-100%"]]) {
+test("balance display rounds to whole points symmetrically and avoids signed zero", () => {
+	for (const [value, text] of [[0, "B0%"], [10, "B+10%"], [-30, "B-30%"], [0.25, "B0%"], [-2.42857, "B-2%"], [1.5, "B+2%"], [-1.5, "B-2%"], [0.49, "B0%"], [-0.49, "B0%"], [0.5, "B+1%"], [-0.5, "B-1%"], [-0, "B0%"], [-100, "B-100%"]]) {
 		assert.equal(displayBalance(value), text);
 	}
 });
@@ -123,7 +123,7 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	const first = session();
 	assert.equal(first.widget(), undefined);
 	await flush();
-	assert.equal(first.status(), "W40% R3d12h B+10% [warning]5H80% R2h30m [warning]B-30%");
+	assert.equal(first.status(), "W40% R3d12h B+10% • [warning]5H80% R2h30m [warning]B-30% (P≈1h30m)");
 	assert.ok(first.widget().render(120)[0].startsWith(" "));
 	assert.equal(plain(first.widget().render(12)[0]).length, 12);
 	assert.equal(requests, 1);
@@ -176,7 +176,7 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	for (const tick of ticks) tick();
 	await flush();
 	assert.equal(requests, 4);
-	assert.match(plain(first.status()), /^W99% R\d+d\d+h B-\d+(?:\.\d+)?%$/); // Expired 5-hour limit is hidden.
+	assert.match(plain(first.status()), /^W99% R\d+d\d+h B-\d+% \(P≈[^)]+\)$/); // Expired 5-hour limit is hidden.
 	assert.equal(first.status(), second.status());
 	clock = now + 3.5 * day;
 	for (const tick of ticks) tick();
