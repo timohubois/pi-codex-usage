@@ -1,65 +1,65 @@
 # pi-codex-usage
 
-A small [Pi](https://pi.dev/) extension that shows Codex subscription usage in a right-aligned line above the editor.
+Codex allowance and pacing hints above the [Pi](https://pi.dev/) editor.
 
 ```text
-W0% R6d23h B0% (C≤6d23h)
-W40% R3d12h B+10% (C≈1d0h) • 5H80% R2h30m B-30% (P≈1h30m)
+W40% R3d12h B+10% (C≈1d0h)
 ```
 
-- `W` / `5H`: weekly / 5-hour allowance used. Only valid, unexpired limits appear.
-- `R`: time until that allowance resets.
-- `B`: budget balance against an even usage pace, in percentage points: elapsed fraction of the window × 100 − allowance used. `B+10%` means 10 points below budget; `B0%` means on pace; `B-30%` means 30 points over budget—slow down. Values round to whole percentage points with no signed zero; differences smaller than half a point show `B0%` (roughly on pace, not a signal to stop). Both limits use their reported duration and reset time to infer elapsed time.
-
-For example, halfway through a window, 50% usage is on pace. Using 40% gives `B+10%`; using 80% gives `B-30%`. A full reset with no usage gives `B0%`. This is a planning indicator, not remaining allowance, a provider limit, or a guarantee of future availability.
-
-Action hints stay dim and use a space before their parentheses:
-
-- `(C≤…)`: when no usable consumption rate is known, the maximum horizon until reset **if usage stays within the even budget**. This is not a forecast of actual working time or a guarantee of uninterrupted usage.
-- `(C≈…)`: estimated time you can continue at the recent consumption rate before exceeding the even usage budget, capped at the reset and allowance exhaustion. This is not a promise of working time. The weekly examples above assume recent usage of 1 percentage point/hour.
-- `(S)`: roughly on pace, but recent consumption is faster than the planned rate—slow down. `B0%` alone does not trigger this hint.
-- `(P≈…)`: pausing without further usage would bring you back on pace. This is calculated from the unrounded balance, not an estimate of when your allowance resets. Hints omit minutes for multi-day durations, matching the reset countdown's days-and-hours precision. Shorter durations show hours/minutes or minutes; sub-day pause times round up to a minute and continue times round down. Multi-day hints truncate to whole hours.
-
-Measured continue/slow hints require at least five minutes of positive usage observations within the last 30 minutes. After ten minutes without an observed increase, or when history is insufficient, the limit resets, or reported usage decreases, they fall back to `C≤…` for limits that are roughly on or below budget. Over-budget limits still show `P≈…`. History is shared across sessions and includes all account usage over wall-clock time, including idle gaps—not just activity in the current session. Rounded provider percentages and bursty consumption make these approximate planning hints. No extra requests are made to collect history.
-
-A dim `•` separates valid weekly and 5-hour groups; it disappears when only one is available. With both limits present, the more restrictive budget governs.
-
-The line appears for `openai-codex` models, even at low usage. It disappears when no valid limits are available or for other providers; no blank row, placeholders, commands, or notifications. Usage turns yellow above 70% and red above 90%; negative displayed balances turn yellow only when the remaining allowance requires at least a 20% reduction from the evenly planned consumption rate to last until reset. Small early deficits stay dim; this is a planning heuristic, not a provider rule. Positive and zero balances, and countdowns, stay dim.
-
 ## Install
-
-Install from GitHub:
 
 ```sh
 pi install git:github.com/timohubois/pi-codex-usage
 ```
 
-To install from a local checkout instead, run `pi install /absolute/path/to/pi-codex-usage`. Remove any standalone `~/.pi/agent/extensions/codex-usage.ts` first to avoid loading two copies.
-
-After new commits are pushed to GitHub, update with (no GitHub Release required):
+To update:
 
 ```sh
 pi update git:github.com/timohubois/pi-codex-usage
 ```
 
-Run `/reload` in an open Pi session after installing or updating.
+Run `/reload` in each open Pi session after installing or updating.
+
+## Read the bar
+
+The budget assumes spreading your allowance evenly between resets.
+
+**Legend:** `W` weekly · `5H` five-hour · `R` reset · `B` budget balance · `C` continue · `S` slow · `P` pause.
+
+| Value | Meaning |
+| --- | --- |
+| `W40%` | 40% of the weekly allowance used |
+| `5H80%` | 80% of the 5-hour allowance used |
+| `R3d12h` | Resets in 3 days, 12 hours |
+| `B+10%` | 10 percentage points below an even usage budget |
+| `B0%` | Roughly on pace—not a signal to stop |
+| `B-30%` | 30 percentage points over budget |
+| `(C≈1d0h)` | Estimated time to continue at the recent account-wide consumption rate before going over budget |
+| `(C≤6d23h)` | No usable rate yet: potentially until reset, if usage stays within budget |
+| `(S)` | Recent consumption is too fast to stay on pace |
+| `(P≈1h30m)` | Pausing account-wide usage for about this long would restore pace |
+
+Halfway through a window, 50% usage is on pace. Using 40% gives `B+10%`; using 80% gives `B-30%`.
+
+Usage turns yellow above 70% and red above 90%. A negative `B` turns yellow when lasting until reset needs at least a 20% slowdown from the planned rate—not for every small deficit.
+
+`•` separates the two limits. Stay within both budgets. Time hints are planning aids, not guarantees: changing agent activity changes consumption.
+
+## Updates
+
+- The display and shared cache are checked every minute, including while idle.
+- Background requests have a 5-minute cooldown; completed runs use a 1-minute cooldown.
+- Sessions on the same machine share the account cache and request limits.
+
+Only available, unexpired limits appear, and only for `openai-codex` models. There are no commands or notifications. The extension uses Pi's credentials and an undocumented ChatGPT endpoint that may change.
+
+See [calculation and cache details](docs/usage.md) for the exact rules.
 
 ## Development
 
-Run `npm test`. To try the package without installing it:
-
 ```sh
+npm test
 pi --no-extensions -e ./ --model openai-codex/gpt-6-sol
 ```
 
-The extension uses Pi's existing Codex credentials with an **undocumented** usage endpoint that may change.
-
-## Refresh behavior
-
-- Countdown and budget balance update locally every minute, including while idle. Changed values explicitly request a UI redraw.
-- All Pi sessions on the same machine share an account-specific disk cache and request lock. Background checks, startup, reload, and model changes fetch usage only when the last account-wide attempt was at least five minutes ago, including while idle (roughly 12 requests/hour when idle).
-- After work fully finishes (`agent_settled`, including retries and continuations), request fresh usage with a shared one-minute cooldown. If that cooldown is still running, queue a refresh for when it expires. A request made by another session after that work finished satisfies the queued refresh too. Individual assistant messages do not trigger requests; even during frequent work, requests are capped at one per minute per account.
-- Each session reads the shared cache every minute, so usage fetched by another session appears within a minute. Fresh cache data is reused on startup.
-- Failed fetches hide the line, and retries obey the relevant cooldown. Expired limits stay hidden until fresh data arrives. `PI_OFFLINE=1` disables usage fetches and cache refreshes.
-
-Cache files live under `$XDG_CACHE_HOME/pi-codex-usage`, or `~/.cache/pi-codex-usage`. Account IDs are hashed for filenames; the cache also keeps up to 30 minutes of usage history, but OAuth tokens are never stored there. Coordination applies to sessions sharing that directory, not sessions on other machines.
+For a persistent local install, use `pi install /absolute/path/to/pi-codex-usage` instead of the GitHub source. Remove any standalone `~/.pi/agent/extensions/codex-usage.ts` to avoid duplicate loading.
