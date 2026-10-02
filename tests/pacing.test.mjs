@@ -29,7 +29,7 @@ test("budget warnings account for remaining time and a 20% planned-rate reductio
 
 test("C estimates time until exceeding budget, not time until exhausting allowance", () => {
 	assert.equal(hint(rated(fiveHour, 30)), "(C≈1h)"); // 10-point spare budget / 10-point hourly overspend.
-	assert.equal(hint(rated(weekly, 1)), "(C≈1d0h42m)");
+	assert.equal(hint(rated(weekly, 1)), "(C≈1d0h)");
 	assert.equal(hint(rated(fiveHour, 20)), "(C≈2h30m)");
 	assert.equal(hint(rated(fiveHour, 10)), "(C≈2h30m)"); // Never continue beyond the reset.
 	assert.equal(hint(rated({ ...fiveHour, usedPercent: 50 }, 20)), "(C≈2h30m)");
@@ -43,7 +43,7 @@ test("S needs a measured rate above the planned pace; B0 alone does not imply st
 
 test("P is calculable without history and means time to regain pace without usage", () => {
 	assert.equal(hint({ ...fiveHour, usedPercent: 80 }), "(P≈1h30m)");
-	assert.equal(hint({ ...weekly, usedPercent: 80 }), "(P≈2d2h24m)");
+	assert.equal(hint({ ...weekly, usedPercent: 80 }), "(P≈2d2h)");
 	assert.equal(hint({ ...fiveHour, usedPercent: 100 }), "(P≈2h30m)");
 	assert.equal(hint({ ...weekly, usedPercent: 99, resetAt: now + (20 * 60 + 37) * 60_000 }), "(P≈18h57m)");
 	const almostReset = { ...fiveHour, usedPercent: 100, resetAt: now + 10_000 };
@@ -56,6 +56,9 @@ test("unknown, zero, invalid, or stale rates use a conditional horizon, not a me
 	for (const rate of [0, -1, NaN, Infinity]) assert.equal(hint(rated(fiveHour, rate)), "(C≤2h30m)");
 	assert.equal(hint({ ...fiveHour, recentRate: { percentPerHour: 30, observedAt: now - 11 * 60_000 } }), "(C≤2h30m)");
 	assert.equal(hint({ ...weekly, usedPercent: 0, resetAt: now + 167 * hour }), "(C≤6d23h)");
+	assert.equal(hint({ ...weekly, usedPercent: 0, resetAt: now + 167 * hour + 8 * 60_000 }), "(C≤6d23h)");
+	assert.equal(hint({ ...fiveHour, usedPercent: 0, resetAt: now + 2 * hour + 15 * 60_000 }), "(C≤2h15m)");
+	assert.equal(hint({ ...fiveHour, usedPercent: 0, resetAt: now + 30 * 60_000 }), "(C≤30m)");
 	assert.equal(hint({ ...fiveHour, usedPercent: 0, resetAt: now + 5 * hour }), "(C≤5h)");
 	assert.equal(hint({ ...fiveHour, recentRate: { percentPerHour: 30, observedAt: now + 60_000 } }), "(C≤2h30m)");
 });

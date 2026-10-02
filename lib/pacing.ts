@@ -45,7 +45,7 @@ function hintTime(milliseconds: number, roundUp: boolean): string {
 	const days = Math.floor(total / 1440);
 	const hours = Math.floor(total % 1440 / 60);
 	const minutes = total % 60;
-	if (days) return `${days}d${hours}h${minutes ? `${minutes}m` : ""}`;
+	if (days) return `${days}d${hours}h`;
 	if (hours) return `${hours}h${minutes ? `${minutes}m` : ""}`;
 	return `${minutes}m`;
 }
