@@ -76,16 +76,22 @@ export function countdown(resetAt: number, now: number): string {
 	return `${Math.ceil(remaining / 60_000)}m`;
 }
 
-export function pace(window: UsageWindow, now: number, unit: "day" | "hour" = "day"): number | undefined {
+export function pace(window: UsageWindow, now: number): number | undefined {
 	if (now >= window.resetAt) return undefined;
 	const remaining = Math.max(0, 100 - window.usedPercent);
-	// Percentage points of this window's allowance per rolling day or hour.
-	return remaining * (unit === "hour" ? 3_600_000 : 86_400_000) / (window.resetAt - now);
+	// Percentage points of this window's allowance per rolling hour.
+	return remaining * 3_600_000 / (window.resetAt - now);
 }
 
-function displayPace(rate: number): string {
-	// Cap only the display; round down so we don't suggest more than the budget permits.
-	return `${(Math.floor(Math.min(rate, 100) * 10 + 1e-9) / 10).toFixed(1)}%`;
+export function displayPace(rate: number): string {
+	if (rate <= 0) return "0%";
+	// Cap only the display. Keep two decimals, or more for tiny positive rates.
+	const capped = Math.min(rate, 100);
+	const decimals = capped < 0.01 ? 1 - Math.floor(Math.log10(capped)) : 2;
+	const scale = 10 ** decimals;
+	// Round down and remove trailing zeros without turning a positive rate into zero.
+	const rounded = Math.floor(capped * scale + 1e-9) / scale;
+	return `${rounded.toFixed(decimals).replace(/\.?0+$/, "")}%`;
 }
 
 function accountIdFromToken(token: string): string | undefined {
@@ -139,47 +145,23 @@ export default function (pi: ExtensionAPI) {
 	function metrics(now: number): MetricPart[] | undefined {
 		if (!snapshot) return undefined;
 		const parts: MetricPart[] = [];
-		if (snapshot.weekly) {
-			const weekly = snapshot.weekly;
-			if (now >= weekly.resetAt) {
-				parts.push({ text: "W?" }); // Don't display the expired window as current.
-			} else {
-				parts.push({
-					text: `W${weekly.usedPercent}%`,
-					color: weekly.usedPercent > 90 ? "error" : weekly.usedPercent > 70 ? "warning" : undefined,
-				});
-				parts.push({ text: `R${countdown(weekly.resetAt, now)}` });
-			}
+		for (const [label, window] of [["W", snapshot.weekly], ["5H", snapshot.fiveHour]] as const) {
+			if (!window) continue;
+			const rate = pace(window, now);
+			if (rate === undefined) continue; // Hide expired windows until fresh data arrives.
+			parts.push({
+				text: `${label}${window.usedPercent}%`,
+				color: window.usedPercent > 90 ? "error" : window.usedPercent > 70 ? "warning" : undefined,
+			});
+			parts.push({ text: `R${countdown(window.resetAt, now)}` });
+			parts.push({ text: `≈${displayPace(rate)}/h` });
 		}
-		if (snapshot.weekly) {
-			const rate = pace(snapshot.weekly, now);
-			if (rate !== undefined) {
-				parts.push({ text: `≈${displayPace(rate)}/24h` });
-			}
-		}
-		if (snapshot.fiveHour) {
-			const fiveHour = snapshot.fiveHour;
-			if (now >= fiveHour.resetAt) {
-				parts.push({ text: "5H?" });
-			} else {
-				parts.push({
-					text: `5H${fiveHour.usedPercent}%`,
-					color: fiveHour.usedPercent > 90 ? "error" : fiveHour.usedPercent > 70 ? "warning" : undefined,
-				});
-				parts.push({ text: `R${countdown(fiveHour.resetAt, now)}` });
-				const rate = pace(fiveHour, now, "hour");
-				if (rate !== undefined) {
-					parts.push({ text: `≈${displayPace(rate)}/1h` });
-				}
-			}
-		}
-		return parts;
+		return parts.length ? parts : undefined;
 	}
 
 	function show(ctx: ExtensionContext): void {
 		if (ctx.mode !== "tui") return;
-		// An empty widget reserves the row while usage is loading or unavailable.
-		setWidget(ctx, ctx.model?.provider === "openai-codex" ? (metrics(Date.now()) ?? []) : undefined);
+		setWidget(ctx, ctx.model?.provider === "openai-codex" ? metrics(Date.now()) : undefined);
 	}
 
 	function cancel(): void {

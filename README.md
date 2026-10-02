@@ -3,15 +3,15 @@
 A small [Pi](https://pi.dev/) extension that shows Codex subscription usage in a right-aligned line above the editor.
 
 ```text
-W31% R4d23h ≈13.9%/24h
-W31% R4d23h ≈13.9%/24h 5H82% R2h15m ≈8.0%/1h
+W31% R4d23h ≈0.57%/h
+W99% R22h40m ≈0.04%/h 5H82% R2h15m ≈8%/h
 ```
 
-- `W` / `5H`: weekly / 5-hour allowance used. The 5-hour group appears only if reported.
+- `W` / `5H`: weekly / 5-hour allowance used. Only valid, unexpired limits appear.
 - `R`: time until that allowance resets.
-- `≈…%/24h` / `≈…%/1h`: remaining allowance (`100% − W` / `100% − 5H`) budgeted over the time until reset, per 24 hours / one hour. Rounded down and capped at 100% for display, these are planning rates—not provider limits or guarantees about future use.
+- `≈…%/h`: remaining allowance (`100% − W` / `100% − 5H`) spread evenly over the hours until reset. Both limits use hourly pacing. Rates are rounded down to two decimals (more for tiny positive values), omit trailing zeros, and are capped at 100%/h for display. These are planning rates—not provider limits or guarantees about future use. With both limits present, stay within both budgets.
 
-The line stays present for `openai-codex` models, even at low usage. It remains blank while data is unavailable and disappears for other providers. Usage turns yellow above 70% and red above 90%; the other figures stay dim.
+The line appears for `openai-codex` models, even at low usage. It disappears when no valid limits are available or for other providers; no blank row, placeholders, commands, or notifications. Usage turns yellow above 70% and red above 90%; the other figures stay dim.
 
 ## Install
 
@@ -39,4 +39,4 @@ Run `npm test`. To try the package without installing it:
 pi --no-extensions -e ./ --model openai-codex/gpt-6-sol
 ```
 
-The extension uses Pi's existing Codex credentials with an **undocumented** usage endpoint that may change. It refreshes after activity but does not poll the network periodically while Pi is idle. Failed requests leave the reserved line blank rather than displaying stale usage.
+The extension uses Pi's existing Codex credentials with an **undocumented** usage endpoint that may change. It refreshes after activity but does not poll the network periodically while Pi is idle. Failed requests hide the line rather than displaying stale usage.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import extension, { countdown, pace, parseUsage } from "../extensions/codex-usage.ts";
+import extension, { countdown, displayPace, pace, parseUsage } from "../extensions/codex-usage.ts";
 
 const day = 86_400_000;
 const now = Date.parse("2026-09-26T10:10:00Z");
@@ -41,16 +41,30 @@ test("shows compact reset countdowns", () => {
 	assert.equal(countdown(now + 9 * 60_000, now), "9m");
 });
 
-test("weekly pace uses rolling days and 5-hour pace uses rolling hours", () => {
-	assert.ok(Math.abs(pace(weekly, now) - 14.6) < 0.3);
+test("both windows use rolling hourly pace", () => {
+	assert.ok(Math.abs(pace(weekly, now) - 73 / 120) < 0.001);
 	assert.ok(pace(weekly, now + day) > pace(weekly, now));
 	assert.ok(pace({ ...weekly, usedPercent: 32 }, now) < pace(weekly, now));
 	assert.equal(pace(weekly, resetAt), undefined);
-	assert.equal(pace({ ...weekly, usedPercent: 0, resetAt: now + day / 2 }, now), 200); // Only the display is capped.
+	assert.equal(pace({ ...weekly, usedPercent: 0, resetAt: now + day / 2 }, now), 100 / 12);
 	const fiveHour = { usedPercent: 82, resetAt: now + 2 * 3_600_000 + 15 * 60_000, durationSeconds: 18000 };
-	assert.equal(pace(fiveHour, now, "hour"), 8); // 18 points left over 2.25 hours
-	assert.equal(pace({ ...fiveHour, usedPercent: 10, resetAt: now + 30 * 60_000 }, now, "hour"), 180);
-	assert.equal(pace(fiveHour, fiveHour.resetAt, "hour"), undefined);
+	assert.equal(pace(fiveHour, now), 8); // 18 points left over 2.25 hours
+	assert.equal(pace({ ...fiveHour, usedPercent: 10, resetAt: now + 30 * 60_000 }, now), 180);
+	assert.equal(pace(fiveHour, fiveHour.resetAt), undefined);
+	assert.equal(pace({ ...weekly, usedPercent: 100 }, now), 0);
+});
+
+test("pace display is compact, rounded down, and preserves small positive rates", () => {
+	assert.equal(displayPace(0), "0%");
+	assert.equal(displayPace(8), "8%");
+	assert.equal(displayPace(0.58), "0.58%");
+	assert.equal(displayPace(0.579), "0.57%");
+	assert.equal(displayPace(1 / (22 + 40 / 60)), "0.04%");
+	assert.equal(displayPace(0.00449), "0.0044%");
+	assert.equal(displayPace(0.00000123), "0.0000012%");
+	assert.equal(displayPace(1.5), "1.5%");
+	assert.equal(displayPace(100), "100%");
+	assert.equal(displayPace(180), "100%");
 });
 
 const token = [
@@ -76,7 +90,7 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	let requests = 0;
 	let failRequests = false;
 	let tick;
-	const weeklyResetAt = Date.now() + 5 * day;
+	let weeklyResetAt = Date.now() + 5 * day;
 	const fiveHourResetAt = Date.now() + 2 * 3_600_000;
 	const originalFetch = globalThis.fetch;
 	const originalSetInterval = globalThis.setInterval;
@@ -122,9 +136,9 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	t.after(() => handlers.get("session_shutdown")({}, ctx));
 
 	handlers.get("session_start")({}, ctx);
-	assert.deepEqual(widget?.render(120), [" ".repeat(120)]); // Reserve an empty row before the first fetch.
+	assert.equal(widget, undefined); // No reserved row while usage is loading.
 	await flush();
-	assert.match(status(), /^W31% R\d+d\d+h ≈\d+\.\d%\/24h$/);
+	assert.match(status(), /^W31% R\d+d\d+h ≈\d+(?:\.\d+)?%\/h$/);
 	assert.ok(widget.render(120)[0].startsWith(" "));
 	assert.equal(widget.render(12)[0].length, 12);
 	assert.equal(requests, 1);
@@ -149,7 +163,7 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	assert.equal(requests, 2); // Adjacent responses coalesce into one delayed request.
 	await afterDebounce();
 	assert.equal(requests, 3);
-	assert.match(status(), /^\[warning\]W71% R\d+d\d+h ≈\d+\.\d%\/24h \[warning\]5H82% R\d+h\d+m ≈\d+\.\d%\/1h$/);
+	assert.match(status(), /^\[warning\]W71% R\d+d\d+h ≈\d+(?:\.\d+)?%\/h \[warning\]5H82% R\d+h\d+m ≈\d+(?:\.\d+)?%\/h$/);
 	assert.equal(widget.render(120)[0].replaceAll("[warning]", "").length, 120);
 	assert.ok(widget.render(120)[0].startsWith(" ")); // Right-aligned at the available width.
 	assert.equal(widget.render(12)[0].replaceAll("[warning]", "").length, 12);
@@ -161,7 +175,7 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	handlers.get("message_end")({ message: { role: "assistant" } }, ctx);
 	await afterDebounce();
 	assert.equal(requests, 4);
-	assert.match(status(), /\[error\]W91% R\d+d\d+h ≈\d+\.\d%\/24h \[error\]5H100% R\d+h\d+m ≈0\.0%\/1h$/);
+	assert.match(status(), /\[error\]W91% R\d+d\d+h ≈\d+(?:\.\d+)?%\/h \[error\]5H100% R\d+h\d+m ≈0%\/h$/);
 	handlers.get("message_end")({ message: { role: "user" } }, ctx);
 	await flush();
 	assert.equal(requests, 4);
@@ -174,8 +188,8 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 
 	idle = true;
 	Date.now = () => fiveHourResetAt + 1_000;
-	tick(); // An expired idle window is unknown, not the old used percentage.
-	assert.match(status(), /5H\?$/);
+	tick(); // Hide an expired idle window without hiding the valid weekly window.
+	assert.match(status(), /^\[error\]W91% R\d+d\d+h ≈\d+(?:\.\d+)?%\/h$/);
 	assert.equal(requests, 5);
 	Date.now = originalNow;
 
@@ -183,22 +197,27 @@ test("right-aligns the widget, refreshes on activity, and colors usage only", as
 	fiveHourUsed = 10;
 	handlers.get("message_end")({ message: { role: "assistant" } }, ctx);
 	await afterDebounce();
-	assert.match(status(), /^W31% R\d+d\d+h ≈\d+\.\d%\/24h 5H10% R\d+h\d+m ≈\d+\.\d%\/1h$/);
+	assert.match(status(), /^W31% R\d+d\d+h ≈\d+(?:\.\d+)?%\/h 5H10% R\d+h\d+m ≈\d+(?:\.\d+)?%\/h$/);
 	Date.now = () => fiveHourResetAt - 30 * 60_000;
 	tick();
-	assert.match(status(), /5H10% R30m ≈100\.0%\/1h$/); // 180%/h is capped at 100%/h.
+	assert.match(status(), /5H10% R30m ≈100%\/h$/); // 180%/h is capped at 100%/h.
 	Date.now = () => weeklyResetAt - day / 2;
 	tick();
-	assert.match(status(), /^W31% R12h0m ≈100\.0%\/24h 5H\?$/); // 138%/d is capped at 100%/d.
+	assert.equal(status(), "W31% R12h0m ≈5.75%/h"); // The expired 5-hour window is omitted.
 	Date.now = () => weeklyResetAt + 1_000;
 	tick();
-	assert.equal(status(), "W? 5H?"); // Never treat an expired weekly window as current.
+	assert.equal(widget, undefined); // Hide the row when both windows have expired.
 	Date.now = originalNow;
+
+	weeklyResetAt = originalNow() - 1_000;
+	handlers.get("message_end")({ message: { role: "assistant" } }, ctx);
+	await afterDebounce();
+	assert.match(status(), /^5H10% R\d+h\d+m ≈\d+(?:\.\d+)?%\/h$/); // A valid 5-hour window stands alone.
 
 	failRequests = true;
 	handlers.get("message_end")({ message: { role: "assistant" } }, ctx);
 	await afterDebounce();
-	assert.deepEqual(widget?.render(120), [" ".repeat(120)]); // Failures keep the row but not stale data.
+	assert.equal(widget, undefined); // Failures hide the row rather than leaving stale data.
 
 	ctx.model = { provider: "another" };
 	handlers.get("model_select")({}, ctx);
