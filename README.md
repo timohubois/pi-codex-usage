@@ -41,4 +41,14 @@ Run `npm test`. To try the package without installing it:
 pi --no-extensions -e ./ --model openai-codex/gpt-6-sol
 ```
 
-The extension uses Pi's existing Codex credentials with an **undocumented** usage endpoint that may change. It refreshes after activity but does not poll the network periodically while Pi is idle. Failed requests hide the line rather than displaying stale usage.
+The extension uses Pi's existing Codex credentials with an **undocumented** usage endpoint that may change.
+
+## Refresh behavior
+
+- Countdown and budget balance update locally every minute, including while idle. Changed values explicitly request a UI redraw.
+- All Pi sessions on the same machine share an account-specific disk cache and request lock. Background checks, startup, reload, and model changes fetch usage only when the last account-wide attempt was at least five minutes ago, including while idle (roughly 12 requests/hour when idle).
+- After work fully finishes (`agent_settled`, including retries and continuations), request fresh usage with a shared one-minute cooldown. If that cooldown is still running, queue a refresh for when it expires. A request made by another session after that work finished satisfies the queued refresh too. Individual assistant messages do not trigger requests; even during frequent work, requests are capped at one per minute per account.
+- Each session reads the shared cache every minute, so usage fetched by another session appears within a minute. Fresh cache data is reused on startup.
+- Failed fetches hide the line, and retries obey the relevant cooldown. Expired limits stay hidden until fresh data arrives. `PI_OFFLINE=1` disables usage fetches and cache refreshes.
+
+Cache files live under `$XDG_CACHE_HOME/pi-codex-usage`, or `~/.cache/pi-codex-usage`. Account IDs are hashed for filenames; OAuth tokens are never stored there. Coordination applies to sessions sharing that directory, not sessions on other machines.

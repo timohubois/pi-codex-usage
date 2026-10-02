@@ -1,11 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { sharedUsage } from "../lib/shared-usage.ts";
 
 // The endpoint is used by ChatGPT but is not a documented public API.
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const WIDGET_KEY = "codex-usage";
-const POLL_MS = 10 * 60_000;
-const TICK_MS = 5 * 60_000;
-const AFTER_MESSAGE_MS = 1_500;
+const TICK_MS = 60_000;
 export type UsageWindow = { usedPercent: number; resetAt: number; durationSeconds: number };
 export type UsageSnapshot = { weekly?: UsageWindow; fiveHour?: UsageWindow };
 type MetricPart = { text: string; color?: "warning" | "error" };
@@ -103,12 +102,14 @@ function accountIdFromToken(token: string): string | undefined {
 export default function (pi: ExtensionAPI) {
 	let snapshot: UsageSnapshot | undefined;
 	let interval: ReturnType<typeof setInterval> | undefined;
-	let afterMessage: ReturnType<typeof setTimeout> | undefined;
+	let deferredWork: ReturnType<typeof setTimeout> | undefined;
+	let queuedWorkAt: number | undefined;
 	let lastDisplay: string | undefined;
+	let requestRender: (() => void) | undefined;
+	let accountId: string | undefined;
 	let controller: AbortController | undefined;
 	let inFlight: Promise<void> | undefined;
 	let generation = 0;
-	let lastAttempt = 0;
 
 	function setWidget(ctx: ExtensionContext, parts: MetricPart[] | undefined): void {
 		const display = parts?.map(({ text, color }) => `${color ?? "dim"}:${text}`).join(" ");
@@ -116,26 +117,32 @@ export default function (pi: ExtensionAPI) {
 		lastDisplay = display;
 		if (!parts) {
 			ctx.ui.setWidget(WIDGET_KEY, undefined);
+			requestRender?.();
+			requestRender = undefined;
 			return;
 		}
-		ctx.ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
-			invalidate() {},
-			render(width: number): string[] {
-				// Metric labels and values are ASCII, so their lengths equal terminal columns.
-				// Style after measuring to keep ANSI escapes out of the width calculation.
-				let remaining = Math.max(0, width);
-				let line = "";
-				for (const { text, color } of parts) {
-					const separator = line ? " " : "";
-					if (remaining <= separator.length) break;
-					const chunk = text.slice(0, remaining - separator.length);
-					line += separator + theme.fg(color ?? "dim", chunk);
-					remaining -= separator.length + chunk.length;
-					if (chunk.length < text.length) break;
-				}
-				return [" ".repeat(remaining) + line];
-			},
-		}), { placement: "aboveEditor" });
+		ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
+			requestRender = () => tui.requestRender();
+			return {
+				invalidate() {},
+				render(width: number): string[] {
+					// Metric labels and values are ASCII, so their lengths equal terminal columns.
+					// Style after measuring to keep ANSI escapes out of the width calculation.
+					let remaining = Math.max(0, width);
+					let line = "";
+					for (const { text, color } of parts) {
+						const separator = line ? " " : "";
+						if (remaining <= separator.length) break;
+						const chunk = text.slice(0, remaining - separator.length);
+						line += separator + theme.fg(color ?? "dim", chunk);
+						remaining -= separator.length + chunk.length;
+						if (chunk.length < text.length) break;
+					}
+					return [" ".repeat(remaining) + line];
+				},
+			};
+		}, { placement: "aboveEditor" });
+		requestRender?.();
 	}
 
 	function metrics(now: number): MetricPart[] | undefined {
@@ -165,41 +172,68 @@ export default function (pi: ExtensionAPI) {
 		generation++;
 		controller?.abort();
 		controller = undefined;
-		if (afterMessage) clearTimeout(afterMessage);
-		afterMessage = undefined;
+		if (deferredWork) clearTimeout(deferredWork);
+		deferredWork = undefined;
+		queuedWorkAt = undefined;
 		inFlight = undefined;
 		snapshot = undefined;
-		lastAttempt = 0;
+		accountId = undefined;
 	}
 
-	function refresh(ctx: ExtensionContext, force = false): Promise<void> {
+	function refresh(ctx: ExtensionContext, afterWorkAt?: number): Promise<void> {
 		if (ctx.mode !== "tui" || ctx.model?.provider !== "openai-codex" || process.env.PI_OFFLINE === "1") {
 			return Promise.resolve();
 		}
-		if (inFlight) return inFlight;
-		if (!force && Date.now() - lastAttempt < POLL_MS) return Promise.resolve();
-		lastAttempt = Date.now();
+		if (inFlight) {
+			if (afterWorkAt !== undefined) queuedWorkAt = Math.max(queuedWorkAt ?? afterWorkAt, afterWorkAt);
+			return inFlight;
+		}
+		if (afterWorkAt !== undefined && deferredWork) {
+			clearTimeout(deferredWork);
+			deferredWork = undefined;
+		}
 		const currentGeneration = generation;
 		const abort = new AbortController();
 		controller = abort;
 		const request = (async () => {
 			try {
-				// Use Pi's credential resolver so OAuth refresh is handled by Pi.
-				const token = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-				if (currentGeneration !== generation) return;
-				const accountId = token && accountIdFromToken(token);
-				if (!token || !accountId) throw new Error("Codex OAuth unavailable");
-				const response = await fetch(USAGE_URL, {
-					headers: {
-						Authorization: `Bearer ${token}`,
-						"ChatGPT-Account-Id": accountId,
-						Accept: "application/json",
+				let initialToken: string | undefined;
+				if (!accountId) {
+					initialToken = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+					if (currentGeneration !== generation) return;
+					accountId = initialToken && accountIdFromToken(initialToken);
+				}
+				const id = accountId;
+				if (!id) throw new Error("Codex OAuth unavailable");
+				const next = await sharedUsage(id, async () => {
+					if (abort.signal.aborted) throw new Error("Usage refresh cancelled");
+					// Resolve credentials only for actual requests, not every local cache read.
+					const token = initialToken ?? await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+					if (!token || accountIdFromToken(token) !== id) throw new Error("Codex account changed");
+					const response = await fetch(USAGE_URL, {
+						headers: {
+							Authorization: `Bearer ${token}`,
+							"ChatGPT-Account-Id": id,
+							Accept: "application/json",
+						},
+						signal: AbortSignal.any([abort.signal, AbortSignal.timeout(8_000)]),
+					});
+					if (!response.ok) throw new Error(`Codex usage HTTP ${response.status}`);
+					const usage = parseUsage(await response.json(), Date.now());
+					if (!usage) throw new Error("Codex usage windows unavailable");
+					return usage;
+				}, {
+					afterWorkAt,
+					onDeferred: (delayMs) => {
+						if (currentGeneration !== generation || afterWorkAt === undefined) return;
+						if (deferredWork) clearTimeout(deferredWork);
+						deferredWork = setTimeout(() => {
+							deferredWork = undefined;
+							void refresh(ctx, afterWorkAt);
+						}, delayMs);
+						deferredWork.unref?.();
 					},
-					signal: AbortSignal.any([abort.signal, AbortSignal.timeout(8_000)]),
 				});
-				if (!response.ok) throw new Error(`Codex usage HTTP ${response.status}`);
-				const next = parseUsage(await response.json(), Date.now());
-				if (!next) throw new Error("Codex usage windows unavailable");
 				if (currentGeneration !== generation) return;
 				snapshot = next;
 			} catch {
@@ -215,7 +249,13 @@ export default function (pi: ExtensionAPI) {
 		})();
 		inFlight = request;
 		void request.finally(() => {
-			if (inFlight === request) inFlight = undefined;
+			if (inFlight !== request) return;
+			inFlight = undefined;
+			if (queuedWorkAt !== undefined && currentGeneration === generation) {
+				const workAt = queuedWorkAt;
+				queuedWorkAt = undefined;
+				void refresh(ctx, workAt);
+			}
 		});
 		return request;
 	}
@@ -226,16 +266,10 @@ export default function (pi: ExtensionAPI) {
 		if (interval) clearInterval(interval);
 		lastDisplay = undefined; // Pi may have cleared widgets when changing sessions.
 		show(ctx);
-		void refresh(ctx, true);
+		void refresh(ctx);
 		interval = setInterval(() => {
-			show(ctx); // Local countdown and budget balance; only update when text changed.
-			if (ctx.isIdle()) return; // No network polling while Pi is waiting for a prompt.
-			const resetPassed = [snapshot?.weekly, snapshot?.fiveHour].some((w) => w && w.resetAt <= Date.now());
-			if (resetPassed && Date.now() - lastAttempt >= TICK_MS) {
-				void refresh(ctx, true); // Retry a stale reset no more than once every five minutes.
-			} else {
-				void refresh(ctx); // Otherwise fetch only when the ten-minute poll is due.
-			}
+			show(ctx); // Local time advances even while idle; redraw only changed values.
+			void refresh(ctx); // Read the shared cache; its account-wide cooldown limits requests.
 		}, TICK_MS);
 		interval.unref?.();
 	});
@@ -244,24 +278,11 @@ export default function (pi: ExtensionAPI) {
 		if (ctx.mode !== "tui") return;
 		cancel();
 		show(ctx);
-		void refresh(ctx, true);
+		void refresh(ctx);
 	});
 
-	pi.on("agent_start", (_event, ctx) => {
-		if (ctx.mode !== "tui" || ctx.model?.provider !== "openai-codex") return;
-		const resetPassed = [snapshot?.weekly, snapshot?.fiveHour].some((w) => w && w.resetAt <= Date.now());
-		if (resetPassed || Date.now() - lastAttempt >= POLL_MS) void refresh(ctx, true);
-	});
-
-	pi.on("message_end", (event, ctx) => {
-		if (event.message.role !== "assistant" || ctx.mode !== "tui" || ctx.model?.provider !== "openai-codex") return;
-		// Coalesce nearby responses and give the provider time to account for them.
-		if (afterMessage) clearTimeout(afterMessage);
-		afterMessage = setTimeout(() => {
-			afterMessage = undefined;
-			void refresh(ctx, true);
-		}, AFTER_MESSAGE_MS);
-		afterMessage.unref?.();
+	pi.on("agent_settled", (_event, ctx) => {
+		void refresh(ctx, Date.now()); // Prefer fresh post-work usage, with a shared one-minute cooldown.
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
