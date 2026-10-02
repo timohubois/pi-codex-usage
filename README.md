@@ -3,15 +3,17 @@
 A small [Pi](https://pi.dev/) extension that shows Codex subscription usage in a right-aligned line above the editor.
 
 ```text
-W31% R4d23h ≈0.57%/h
-W99% R22h40m ≈0.04%/h 5H82% R2h15m ≈8%/h
+W40% R3d12h B+10%
+W40% R3d12h B+10% 5H80% R2h30m B-30%
 ```
 
 - `W` / `5H`: weekly / 5-hour allowance used. Only valid, unexpired limits appear.
 - `R`: time until that allowance resets.
-- `≈…%/h`: remaining allowance (`100% − W` / `100% − 5H`) spread evenly over the hours until reset. Both limits use hourly pacing. Rates are rounded down to two decimals (more for tiny positive values), omit trailing zeros, and are capped at 100%/h for display. These are planning rates—not provider limits or guarantees about future use. With both limits present, stay within both budgets.
+- `B`: budget balance against an even usage pace, in percentage points: elapsed fraction of the window × 100 − allowance used. `B+10%` means 10 points below budget; `B0%` means on pace; `B-30%` means 30 points over budget—slow down. Values round to at most two decimals with no trailing zeros or signed zero. Both limits use their reported duration and reset time to infer elapsed time.
 
-The line appears for `openai-codex` models, even at low usage. It disappears when no valid limits are available or for other providers; no blank row, placeholders, commands, or notifications. Usage turns yellow above 70% and red above 90%; the other figures stay dim.
+For example, halfway through a window, 50% usage is on pace. Using 40% gives `B+10%`; using 80% gives `B-30%`. A full reset with no usage gives `B0%`. This is a planning indicator, not remaining allowance, a provider limit, or a guarantee of future availability.
+
+The line appears for `openai-codex` models, even at low usage. It disappears when no valid limits are available or for other providers; no blank row, placeholders, commands, or notifications. Usage turns yellow above 70% and red above 90%; negative displayed balances turn yellow. Positive and zero balances, and countdowns, stay dim.
 
 ## Install
 

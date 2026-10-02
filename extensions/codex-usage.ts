@@ -76,22 +76,18 @@ export function countdown(resetAt: number, now: number): string {
 	return `${Math.ceil(remaining / 60_000)}m`;
 }
 
-export function pace(window: UsageWindow, now: number): number | undefined {
+export function budgetBalance(window: UsageWindow, now: number): number | undefined {
 	if (now >= window.resetAt) return undefined;
-	const remaining = Math.max(0, 100 - window.usedPercent);
-	// Percentage points of this window's allowance per rolling hour.
-	return remaining * 3_600_000 / (window.resetAt - now);
+	const duration = window.durationSeconds * 1000;
+	const elapsed = Math.max(0, Math.min(duration, now - (window.resetAt - duration)));
+	// Positive means below an even usage budget; negative means ahead of it.
+	return elapsed / duration * 100 - window.usedPercent;
 }
 
-export function displayPace(rate: number): string {
-	if (rate <= 0) return "0%";
-	// Cap only the display. Keep two decimals, or more for tiny positive rates.
-	const capped = Math.min(rate, 100);
-	const decimals = capped < 0.01 ? 1 - Math.floor(Math.log10(capped)) : 2;
-	const scale = 10 ** decimals;
-	// Round down and remove trailing zeros without turning a positive rate into zero.
-	const rounded = Math.floor(capped * scale + 1e-9) / scale;
-	return `${rounded.toFixed(decimals).replace(/\.?0+$/, "")}%`;
+export function displayBalance(balance: number): string {
+	const magnitude = Number(Math.abs(balance).toFixed(2));
+	if (magnitude === 0) return "B0%"; // Avoid signed zero after rounding.
+	return `B${balance < 0 ? "-" : "+"}${magnitude}%`;
 }
 
 function accountIdFromToken(token: string): string | undefined {
@@ -147,14 +143,15 @@ export default function (pi: ExtensionAPI) {
 		const parts: MetricPart[] = [];
 		for (const [label, window] of [["W", snapshot.weekly], ["5H", snapshot.fiveHour]] as const) {
 			if (!window) continue;
-			const rate = pace(window, now);
-			if (rate === undefined) continue; // Hide expired windows until fresh data arrives.
+			const balance = budgetBalance(window, now);
+			if (balance === undefined) continue; // Hide expired windows until fresh data arrives.
 			parts.push({
 				text: `${label}${window.usedPercent}%`,
 				color: window.usedPercent > 90 ? "error" : window.usedPercent > 70 ? "warning" : undefined,
 			});
 			parts.push({ text: `R${countdown(window.resetAt, now)}` });
-			parts.push({ text: `≈${displayPace(rate)}/h` });
+			const text = displayBalance(balance);
+			parts.push({ text, color: text.startsWith("B-") ? "warning" : undefined });
 		}
 		return parts.length ? parts : undefined;
 	}
@@ -231,7 +228,7 @@ export default function (pi: ExtensionAPI) {
 		show(ctx);
 		void refresh(ctx, true);
 		interval = setInterval(() => {
-			show(ctx); // Local countdown and pace; only update the widget when text changed.
+			show(ctx); // Local countdown and budget balance; only update when text changed.
 			if (ctx.isIdle()) return; // No network polling while Pi is waiting for a prompt.
 			const resetPassed = [snapshot?.weekly, snapshot?.fiveHour].some((w) => w && w.resetAt <= Date.now());
 			if (resetPassed && Date.now() - lastAttempt >= TICK_MS) {
