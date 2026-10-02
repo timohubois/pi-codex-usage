@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sharedUsage } from "../lib/shared-usage.ts";
-import { actionHint } from "../lib/pacing.ts";
+import { actionHint, budgetWarning } from "../lib/pacing.ts";
 
 // The endpoint is used by ChatGPT but is not a documented public API.
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
@@ -165,7 +165,7 @@ export default function (pi: ExtensionAPI) {
 			});
 			parts.push({ text: `R${countdown(window.resetAt, now)}` });
 			const text = displayBalance(balance);
-			parts.push({ text, color: text.startsWith("B-") ? "warning" : undefined });
+			parts.push({ text, color: budgetWarning(window, now) ? "warning" : undefined });
 			const hint = actionHint(window, balance, now);
 			if (hint) parts.push({ text: hint });
 		}

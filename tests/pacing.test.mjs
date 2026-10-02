@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { budgetBalance } from "../extensions/codex-usage.ts";
-import { actionHint, HISTORY_MS, withRecentRates } from "../lib/pacing.ts";
+import { actionHint, budgetWarning, HISTORY_MS, withRecentRates } from "../lib/pacing.ts";
 
 const hour = 3_600_000;
 const now = Date.parse("2026-10-02T20:00:00Z");
@@ -9,6 +9,23 @@ const fiveHour = { usedPercent: 40, durationSeconds: 18000, resetAt: now + 2.5 *
 const weekly = { usedPercent: 40, durationSeconds: 604800, resetAt: now + 84 * hour };
 const rated = (window, rate) => ({ ...window, recentRate: { percentPerHour: rate, observedAt: now } });
 const hint = (window, clock = now) => actionHint(window, budgetBalance(window, clock), clock);
+
+test("budget warnings account for remaining time and a 20% planned-rate reduction", () => {
+	assert.equal(budgetWarning({ ...weekly, usedPercent: 1, resetAt: now + 167.75 * hour }, now), false);
+	assert.equal(budgetWarning({ ...weekly, usedPercent: 99, resetAt: now + 3 * hour }, now), true);
+	for (const window of [weekly, fiveHour]) {
+		assert.equal(budgetWarning(window, now), false); // Below budget.
+		assert.equal(budgetWarning({ ...window, usedPercent: 50 }, now), false);
+		assert.equal(budgetWarning({ ...window, usedPercent: 51 }, now), false);
+		assert.equal(budgetWarning({ ...window, usedPercent: 59.9 }, now), false);
+		assert.equal(budgetWarning({ ...window, usedPercent: 60 }, now), true); // Exactly a 20% reduction.
+		assert.equal(budgetWarning({ ...window, usedPercent: 80 }, now), true);
+		assert.equal(budgetWarning({ ...window, usedPercent: 100 }, now), true);
+		assert.equal(budgetWarning(window, window.resetAt), false);
+	}
+	// Do not color a rounded B0% as an over-budget warning.
+	assert.equal(budgetWarning({ ...fiveHour, usedPercent: 99.9, resetAt: now + 60_000 }, now), false);
+});
 
 test("C estimates time until exceeding budget, not time until exhausting allowance", () => {
 	assert.equal(hint(rated(fiveHour, 30)), "(C≈1h)"); // 10-point spare budget / 10-point hourly overspend.
@@ -20,7 +37,7 @@ test("C estimates time until exceeding budget, not time until exhausting allowan
 
 test("S needs a measured rate above the planned pace; B0 alone does not imply stopping", () => {
 	assert.equal(hint(rated({ ...fiveHour, usedPercent: 50 }, 30)), "(S)");
-	assert.equal(hint({ ...fiveHour, usedPercent: 50 }), undefined);
+	assert.equal(hint({ ...fiveHour, usedPercent: 50 }), "(C≤2h30m)");
 	assert.equal(hint(rated({ ...fiveHour, usedPercent: 49.75 }, 30)), "(S)");
 });
 
@@ -34,10 +51,13 @@ test("P is calculable without history and means time to regain pace without usag
 	assert.equal(actionHint(fiveHour, -30, fiveHour.resetAt), undefined);
 });
 
-test("unknown, zero, invalid, or stale rates do not invent C or S hints", () => {
-	assert.equal(hint(fiveHour), undefined);
-	for (const rate of [0, -1, NaN, Infinity]) assert.equal(hint(rated(fiveHour, rate)), undefined);
-	assert.equal(hint({ ...fiveHour, recentRate: { percentPerHour: 30, observedAt: now - 11 * 60_000 } }), undefined);
+test("unknown, zero, invalid, or stale rates use a conditional horizon, not a measured forecast", () => {
+	assert.equal(hint(fiveHour), "(C≤2h30m)");
+	for (const rate of [0, -1, NaN, Infinity]) assert.equal(hint(rated(fiveHour, rate)), "(C≤2h30m)");
+	assert.equal(hint({ ...fiveHour, recentRate: { percentPerHour: 30, observedAt: now - 11 * 60_000 } }), "(C≤2h30m)");
+	assert.equal(hint({ ...weekly, usedPercent: 0, resetAt: now + 167 * hour }), "(C≤6d23h)");
+	assert.equal(hint({ ...fiveHour, usedPercent: 0, resetAt: now + 5 * hour }), "(C≤5h)");
+	assert.equal(hint({ ...fiveHour, recentRate: { percentPerHour: 30, observedAt: now + 60_000 } }), "(C≤2h30m)");
 });
 
 test("rates need five minutes of positive consumption and are shared across both limits", () => {

@@ -123,7 +123,7 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	const first = session();
 	assert.equal(first.widget(), undefined);
 	await flush();
-	assert.equal(first.status(), "W40% R3d12h B+10% • [warning]5H80% R2h30m [warning]B-30% (P≈1h30m)");
+	assert.equal(first.status(), "W40% R3d12h B+10% (C≤3d12h) • [warning]5H80% R2h30m [warning]B-30% (P≈1h30m)");
 	assert.ok(first.widget().render(120)[0].startsWith(" "));
 	assert.equal(plain(first.widget().render(12)[0]).length, 12);
 	assert.equal(requests, 1);

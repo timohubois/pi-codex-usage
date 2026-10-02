@@ -50,6 +50,17 @@ function hintTime(milliseconds: number, roundUp: boolean): string {
 	return `${minutes}m`;
 }
 
+/** Warn about a meaningful reduction from the evenly planned rate, not every small deficit. */
+export function budgetWarning(window: UsageWindow, now: number): boolean {
+	const remaining = window.resetAt - now;
+	if (remaining <= 0) return false;
+	const plannedRemaining = Math.min(100, remaining / (window.durationSeconds * 1000) * 100);
+	const actualRemaining = Math.max(0, 100 - window.usedPercent);
+	const deficit = plannedRemaining - actualRemaining;
+	if (deficit <= 0 || Math.round(deficit) === 0) return false;
+	return deficit >= plannedRemaining * 0.2;
+}
+
 export function actionHint(window: UsageWindow, balance: number, now: number): string | undefined {
 	const remaining = window.resetAt - now;
 	if (remaining <= 0) return undefined;
@@ -61,7 +72,10 @@ export function actionHint(window: UsageWindow, balance: number, now: number): s
 	}
 	const rate = window.recentRate;
 	if (!rate || !Number.isFinite(rate.percentPerHour) || rate.percentPerHour <= 0 ||
-		!Number.isFinite(rate.observedAt) || now < rate.observedAt || now - rate.observedAt > RATE_MAX_AGE_MS) return undefined;
+		!Number.isFinite(rate.observedAt) || now < rate.observedAt || now - rate.observedAt > RATE_MAX_AGE_MS) {
+		// A conditional reset horizon, not an observed-rate forecast.
+		return `(C≤${hintTime(remaining, false)})`;
+	}
 	if (rate.percentPerHour > baseline && rounded === 0) return "(S)";
 	const untilBudget = rate.percentPerHour > baseline ? balance / (rate.percentPerHour - baseline) * 3_600_000 : remaining;
 	const untilExhausted = (100 - window.usedPercent) / rate.percentPerHour * 3_600_000;

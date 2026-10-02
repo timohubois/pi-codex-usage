@@ -3,7 +3,7 @@
 A small [Pi](https://pi.dev/) extension that shows Codex subscription usage in a right-aligned line above the editor.
 
 ```text
-W40% R3d12h B+10% (C≈1d0h42m)
+W0% R6d23h B0% (C≤6d23h)
 W40% R3d12h B+10% (C≈1d0h42m) • 5H80% R2h30m B-30% (P≈1h30m)
 ```
 
@@ -15,15 +15,16 @@ For example, halfway through a window, 50% usage is on pace. Using 40% gives `B+
 
 Action hints stay dim and use a space before their parentheses:
 
+- `(C≤…)`: when no usable consumption rate is known, the maximum horizon until reset **if usage stays within the even budget**. This is not a forecast of actual working time or a guarantee of uninterrupted usage.
 - `(C≈…)`: estimated time you can continue at the recent consumption rate before exceeding the even usage budget, capped at the reset and allowance exhaustion. This is not a promise of working time. The weekly examples above assume recent usage of 1 percentage point/hour.
 - `(S)`: roughly on pace, but recent consumption is faster than the planned rate—slow down. `B0%` alone does not trigger this hint.
 - `(P≈…)`: pausing without further usage would bring you back on pace. This is calculated from the unrounded balance, not an estimate of when your allowance resets. Pause times round up to a minute; continue times round down.
 
-Continue/slow hints require at least five minutes of positive usage observations within the last 30 minutes. They disappear after ten minutes without an observed increase, or when history is insufficient, the limit resets, or reported usage decreases. History is shared across sessions and includes all account usage over wall-clock time, including idle gaps—not just activity in the current session. Rounded provider percentages and bursty consumption make these approximate planning hints. No extra requests are made to collect history.
+Measured continue/slow hints require at least five minutes of positive usage observations within the last 30 minutes. After ten minutes without an observed increase, or when history is insufficient, the limit resets, or reported usage decreases, they fall back to `C≤…` for limits that are roughly on or below budget. Over-budget limits still show `P≈…`. History is shared across sessions and includes all account usage over wall-clock time, including idle gaps—not just activity in the current session. Rounded provider percentages and bursty consumption make these approximate planning hints. No extra requests are made to collect history.
 
 A dim `•` separates valid weekly and 5-hour groups; it disappears when only one is available. With both limits present, the more restrictive budget governs.
 
-The line appears for `openai-codex` models, even at low usage. It disappears when no valid limits are available or for other providers; no blank row, placeholders, commands, or notifications. Usage turns yellow above 70% and red above 90%; negative displayed balances turn yellow. Positive and zero balances, and countdowns, stay dim.
+The line appears for `openai-codex` models, even at low usage. It disappears when no valid limits are available or for other providers; no blank row, placeholders, commands, or notifications. Usage turns yellow above 70% and red above 90%; negative displayed balances turn yellow only when the remaining allowance requires at least a 20% reduction from the evenly planned consumption rate to last until reset. Small early deficits stay dim; this is a planning heuristic, not a provider rule. Positive and zero balances, and countdowns, stay dim.
 
 ## Install
 
