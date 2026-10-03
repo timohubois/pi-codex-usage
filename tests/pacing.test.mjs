@@ -63,6 +63,33 @@ test("unknown, zero, invalid, or stale rates use a conditional horizon, not a me
 	assert.equal(hint({ ...fiveHour, recentRate: { percentPerHour: 30, observedAt: now + 60_000 } }), "(C≤2h30m)");
 });
 
+test("weekly hints retain rates for 30 minutes; five-hour hints retain them for 10", () => {
+	for (const [window, rate, minutes] of [[weekly, 1, 30], [fiveHour, 30, 10]]) {
+		const withAge = (age) => ({ ...window, recentRate: { percentPerHour: rate, observedAt: now - age } });
+		assert.equal(hint(withAge(minutes * 60_000)), hint(rated(window, rate)));
+		assert.match(hint(withAge(minutes * 60_000 + 1)), /^\(C≤/);
+	}
+});
+
+test("weekly history tolerates unchanged readings longer than five-hour history", () => {
+	const current = { weekly, fiveHour };
+	const sample = (at, usedPercent) => ({ at, snapshot: {
+		weekly: { ...weekly, usedPercent }, fiveHour: { ...fiveHour, usedPercent },
+	} });
+	const history = [sample(now - 30 * 60_000, 39), sample(now - 20 * 60_000, 40)];
+	const result = withRecentRates(current, history, now);
+	assert.equal(result.weekly.recentRate.percentPerHour, 2);
+	assert.equal(result.weekly.recentRate.observedAt, now - 20 * 60_000);
+	assert.match(hint(result.weekly), /^\(C≈/);
+	assert.equal(result.fiveHour.recentRate, undefined);
+	// A longer freshness limit does not bypass resets, corrections, or insufficient history.
+	assert.equal(withRecentRates(current, [sample(now - 30 * 60_000, 41)], now).weekly.recentRate, undefined);
+	const reset = sample(now - 30 * 60_000, 39);
+	reset.snapshot.weekly.resetAt -= hour;
+	assert.equal(withRecentRates(current, [reset], now).weekly.recentRate, undefined);
+	assert.equal(withRecentRates(current, [sample(now - HISTORY_MS - 1, 39)], now).weekly.recentRate, undefined);
+});
+
 test("rates need five minutes of positive consumption and are shared across both limits", () => {
 	const current = { weekly: { ...weekly, usedPercent: 40 }, fiveHour: { ...fiveHour, usedPercent: 40 } };
 	const sample = (at, weeklyUsed, shortUsed) => ({ at, snapshot: {

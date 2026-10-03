@@ -2,7 +2,12 @@ import type { UsageSnapshot, UsageWindow } from "../extensions/codex-usage.ts";
 
 export const HISTORY_MS = 30 * 60_000;
 const MIN_SAMPLE_MS = 5 * 60_000;
-const RATE_MAX_AGE_MS = 10 * 60_000;
+function rateMaxAge(window: UsageWindow): number {
+	// Weekly readings can stay unchanged during active use due to whole-percent rounding.
+	return window.durationSeconds >= 6 * 86_400 && window.durationSeconds <= 8 * 86_400
+		? 30 * 60_000
+		: 10 * 60_000;
+}
 export type UsageSample = { at: number; snapshot: UsageSnapshot };
 
 /** Rates are account-wide allowance consumption over wall-clock time, not tokens or guaranteed work time. */
@@ -30,7 +35,7 @@ export function withRecentRates(snapshot: UsageSnapshot, history: UsageSample[],
 			previousUsed = older.usedPercent;
 			previousAt = sample.at;
 		}
-		if (!oldest || lastIncreaseAt === undefined || now - lastIncreaseAt > RATE_MAX_AGE_MS) continue;
+		if (!oldest || lastIncreaseAt === undefined || now - lastIncreaseAt > rateMaxAge(window)) continue;
 		const elapsed = now - oldest.at;
 		const increase = window.usedPercent - oldest.snapshot[key]!.usedPercent;
 		if (elapsed < MIN_SAMPLE_MS || increase <= 0) continue;
@@ -72,7 +77,7 @@ export function actionHint(window: UsageWindow, balance: number, now: number): s
 	}
 	const rate = window.recentRate;
 	if (!rate || !Number.isFinite(rate.percentPerHour) || rate.percentPerHour <= 0 ||
-		!Number.isFinite(rate.observedAt) || now < rate.observedAt || now - rate.observedAt > RATE_MAX_AGE_MS) {
+		!Number.isFinite(rate.observedAt) || now < rate.observedAt || now - rate.observedAt > rateMaxAge(window)) {
 		// A conditional reset horizon, not an observed-rate forecast.
 		return `(C≤${hintTime(remaining, false)})`;
 	}

@@ -24,7 +24,7 @@ For negative displayed balances, yellow means the remaining allowance requires a
 
 Hints use the unrounded balance. Multi-day times show days and hours, truncating minutes. Shorter times show hours/minutes or minutes; pause times round up to a minute, continue times round down. Durations below a minute show `<1m`.
 
-Recent rates use at least 5 minutes of positive usage observations from the last 30 minutes. They are discarded after 10 minutes without an observed increase, or when a window changes, usage decreases, or history is insufficient. Roughly on/below-budget limits then use `C≤…`; over-budget limits use `P≈…` without needing history.
+Recent rates use at least 5 minutes of positive usage observations from the last 30 minutes. They are discarded after 30 minutes without an observed increase for the weekly window, or 10 minutes for the five-hour window. The longer weekly freshness limit accommodates whole-percentage readings that can stay unchanged during active use. Rates are also discarded when a window changes, usage decreases, or history is insufficient; the 30-minute history limit still applies. Roughly on/below-budget limits then use `C≤…`; over-budget limits use `P≈…` without needing history.
 
 Rates include all account consumption over wall-clock time, including idle gaps. They do not measure individual agents or active working time. Provider rounding and bursty workloads limit their accuracy. No extra requests are made to collect history.
 
