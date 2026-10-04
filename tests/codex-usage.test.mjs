@@ -134,6 +134,8 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	for (let i = 0; i < 20; i++) first.handlers.get("agent_settled")({}, first.ctx);
 	await flush();
 	assert.equal(requests, 1); // A shared request already made at this work timestamp covers all these runs.
+	const pacingOnly = (status) => status.replace(/R\S+/g, "R");
+	const initialPacing = pacingOnly(first.status());
 	const previousRenders = first.renders();
 	clock += 60_000;
 	for (const tick of ticks) tick();
@@ -143,6 +145,16 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	assert.match(first.status(), /R3d11h/);
 	assert.match(first.status(), /R2h29m/);
 	assert.ok(first.renders() > previousRenders);
+	assert.equal(pacingOnly(first.status()), initialPacing);
+	clock += 60_000;
+	for (const tick of ticks) tick();
+	await flush();
+	assert.equal(requests, 1);
+	assert.equal(pacingOnly(first.status()), initialPacing); // Neither balance nor hints drift on cache reads.
+	const third = session(); // A later session must use the original measurement time too.
+	await flush();
+	assert.equal(pacingOnly(third.status()), initialPacing);
+	assert.equal(requests, 1);
 	usedPercent = 99;
 	clock = now + 5 * 60_000;
 	for (const tick of ticks) tick();
@@ -152,6 +164,8 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	await flush();
 	assert.equal(first.status(), second.status());
 	assert.match(first.status(), /^\[error\]W99% .*\[warning\]B-/);
+	assert.match(first.status(), /5H80% .*B-28%/); // A fresh reading updates pacing even if usage stayed at 80%.
+	assert.notEqual(pacingOnly(first.status()).split(" • ")[1], initialPacing.split(" • ")[1]);
 	assert.equal(requests, 2);
 	first.handlers.get("session_start")({}, first.ctx); // Reload/session reset uses the shared cache too.
 	await flush();

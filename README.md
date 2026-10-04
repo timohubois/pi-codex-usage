@@ -47,7 +47,7 @@ Usage turns yellow above 70% and red above 90%. A negative `B` turns yellow when
 
 ## Updates
 
-- The display and shared cache are checked every minute, including while idle.
+- Reset countdowns and the shared cache are checked every minute, including while idle. Budget balance, rates, and hints update only with a new usage measurement.
 - Background requests have a 5-minute cooldown; completed runs use a 1-minute cooldown.
 - Sessions on the same machine share the account cache and request limits.
 

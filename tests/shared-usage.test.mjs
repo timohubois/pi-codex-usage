@@ -20,7 +20,8 @@ test("shares successful usage, isolates accounts, and throttles failures", async
 	const start = Date.now();
 	let requests = 0;
 	const fetchUsage = async () => { requests++; return snapshot; };
-	const options = (offset = 0) => ({ directory, now: start + offset });
+	const measurementTimes = [];
+	const options = (offset = 0) => ({ directory, now: start + offset, onFetchedAt: (at) => measurementTimes.push(at) });
 	assert.deepEqual(await sharedUsage("account-one", fetchUsage, options()), snapshot);
 	assert.deepEqual(await sharedUsage("account-one", fetchUsage, options(60_000)), snapshot);
 	assert.equal(requests, 1);
@@ -34,6 +35,7 @@ test("shares successful usage, isolates accounts, and throttles failures", async
 	assert.equal(requests, 4);
 	assert.deepEqual(await sharedUsage("account-one", fetchUsage, options(3 * POLL_MS)), snapshot);
 	assert.equal(requests, 5);
+	assert.deepEqual(measurementTimes, [start, start, start, start + POLL_MS, start + 3 * POLL_MS]);
 	for (const filename of await readdir(directory)) {
 		assert.match(filename, /^[a-f0-9]{64}\.json$/);
 		assert.doesNotMatch(await readFile(join(directory, filename), "utf8"), /account-one|account-two|Bearer/);

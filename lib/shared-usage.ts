@@ -39,10 +39,11 @@ async function readCache(path: string): Promise<CacheRecord | undefined> {
 	}
 }
 
-function cachedSnapshot(record: CacheRecord | undefined, now: number): UsageSnapshot | undefined {
+function cachedSnapshot(record: CacheRecord | undefined, now: number, onFetchedAt?: (at: number) => void): UsageSnapshot | undefined {
 	if (!record?.snapshot || record.fetchedAt === undefined || now < record.fetchedAt || now - record.fetchedAt > MAX_AGE_MS) {
 		return undefined;
 	}
+	onFetchedAt?.(record.fetchedAt);
 	return withRecentRates(record.snapshot, record.history ?? [], record.fetchedAt);
 }
 
@@ -65,6 +66,8 @@ export async function sharedUsage(
 		now?: number;
 		afterWorkAt?: number;
 		onDeferred?: (delayMs: number) => void;
+		/** Measurement time, preserved when another session reuses the cached snapshot. */
+		onFetchedAt?: (at: number) => void;
 	} = {},
 ): Promise<UsageSnapshot | undefined> {
 	const directory = options.directory ?? cacheDirectory();
@@ -85,7 +88,7 @@ export async function sharedUsage(
 	try {
 		await mkdir(directory, { recursive: true, mode: 0o700 });
 		let record = await readCache(path);
-		if (reuse(record)) return cachedSnapshot(record, now);
+		if (reuse(record)) return cachedSnapshot(record, now, options.onFetchedAt);
 		try {
 			await mkdir(lock, { mode: 0o700 });
 			ownsLock = true;
@@ -95,11 +98,11 @@ export async function sharedUsage(
 			if (now - (await stat(lock)).mtimeMs > LOCK_MS) await rm(lock, { recursive: true, force: true });
 			const latest = await readCache(path);
 			if (!reuse(latest) && options.afterWorkAt !== undefined) options.onDeferred?.(1_000);
-			return cachedSnapshot(latest, now); // Background readers retry on the next tick.
+			return cachedSnapshot(latest, now, options.onFetchedAt); // Background readers retry on the next tick.
 		}
 		// Another process may have updated the cache between our first read and acquisition.
 		record = await readCache(path);
-		if (reuse(record)) return cachedSnapshot(record, now);
+		if (reuse(record)) return cachedSnapshot(record, now, options.onFetchedAt);
 		// Persist the cooldown before requesting, including for failures or process shutdown.
 		await saveCache(path, { ...record, attemptedAt: now });
 		try {
@@ -109,7 +112,7 @@ export async function sharedUsage(
 			const history = [...previous.filter((sample) => sample.at < now && now - sample.at <= HISTORY_MS), { at: now, snapshot }].slice(-31);
 			const next = { attemptedAt: now, fetchedAt: now, snapshot, history };
 			await saveCache(path, next);
-			return cachedSnapshot(next, now);
+			return cachedSnapshot(next, now, options.onFetchedAt);
 		} catch {
 			await saveCache(path, { attemptedAt: now });
 			return undefined;

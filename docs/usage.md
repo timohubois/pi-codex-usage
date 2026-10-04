@@ -22,6 +22,8 @@ For negative displayed balances, yellow means the remaining allowance requires a
 | `S` | Rounded balance is zero, but the measured consumption rate exceeds the planned rate. |
 | `P≈…` | Budget deficit divided by the planned rate, assuming no further account usage. Exhausted allowance also gets a pause hint. |
 
+Budget balances, warning colors, rates, and hints are calculated at the time of the latest successful usage fetch and stay unchanged until another successful fetch, even if the reported percentage is unchanged. Sessions reusing shared data use that same measurement time. Only reset countdowns advance between measurements; expired windows are hidden.
+
 Hints use the unrounded balance. Multi-day times show days and hours, truncating minutes. Shorter times show hours/minutes or minutes; pause times round up to a minute, continue times round down. Durations below a minute show `<1m`.
 
 Recent rates use at least 5 minutes of positive usage observations from the last 30 minutes. They are discarded after 30 minutes without an observed increase for the weekly window, or 10 minutes for the five-hour window. The longer weekly freshness limit accommodates whole-percentage readings that can stay unchanged during active use. Rates are also discarded when a window changes, usage decreases, or history is insufficient; the 30-minute history limit still applies. Roughly on/below-budget limits then use `C≤…`; over-budget limits use `P≈…` without needing history.
@@ -30,7 +32,7 @@ Rates include all account consumption over wall-clock time, including idle gaps.
 
 ## Refresh and storage
 
-- Every minute: recalculate the display and read shared state. Redraw only changed values.
+- Every minute: update reset countdowns, hide expired windows, and read shared state. Recalculate pacing only for a new measurement. Redraw only changed values.
 - Background checks, startup, reload, and model changes: fetch only if the last account-wide attempt was at least 5 minutes ago.
 - After `agent_settled`: use a 1-minute request cooldown. Queue a refresh if necessary; another session's request after that work finished satisfies it too.
 - Failed requests hide usage and obey the relevant cooldown. Expired limits stay hidden until fresh data arrives.

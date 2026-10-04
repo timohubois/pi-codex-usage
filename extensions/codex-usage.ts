@@ -107,6 +107,7 @@ function accountIdFromToken(token: string): string | undefined {
 
 export default function (pi: ExtensionAPI) {
 	let snapshot: UsageSnapshot | undefined;
+	let snapshotAt: number | undefined;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let deferredWork: ReturnType<typeof setTimeout> | undefined;
 	let queuedWorkAt: number | undefined;
@@ -152,11 +153,11 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function metrics(now: number): MetricPart[] | undefined {
-		if (!snapshot) return undefined;
+		if (!snapshot || snapshotAt === undefined) return undefined;
 		const parts: MetricPart[] = [];
 		for (const [label, window] of [["W", snapshot.weekly], ["5H", snapshot.fiveHour]] as const) {
-			if (!window) continue;
-			const balance = budgetBalance(window, now);
+			if (!window || now >= window.resetAt) continue;
+			const balance = budgetBalance(window, snapshotAt);
 			if (balance === undefined) continue; // Hide expired windows until fresh data arrives.
 			if (parts.length) parts.push({ text: "•" });
 			parts.push({
@@ -165,8 +166,8 @@ export default function (pi: ExtensionAPI) {
 			});
 			parts.push({ text: `R${countdown(window.resetAt, now)}` });
 			const text = displayBalance(balance);
-			parts.push({ text, color: budgetWarning(window, now) ? "warning" : undefined });
-			const hint = actionHint(window, balance, now);
+			parts.push({ text, color: budgetWarning(window, snapshotAt) ? "warning" : undefined });
+			const hint = actionHint(window, balance, snapshotAt);
 			if (hint) parts.push({ text: hint });
 		}
 		return parts.length ? parts : undefined;
@@ -186,6 +187,7 @@ export default function (pi: ExtensionAPI) {
 		queuedWorkAt = undefined;
 		inFlight = undefined;
 		snapshot = undefined;
+		snapshotAt = undefined;
 		accountId = undefined;
 	}
 
@@ -214,6 +216,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const id = accountId;
 				if (!id) throw new Error("Codex OAuth unavailable");
+				let fetchedAt: number | undefined;
 				const next = await sharedUsage(id, async () => {
 					if (abort.signal.aborted) throw new Error("Usage refresh cancelled");
 					// Resolve credentials only for actual requests, not every local cache read.
@@ -233,6 +236,7 @@ export default function (pi: ExtensionAPI) {
 					return usage;
 				}, {
 					afterWorkAt,
+					onFetchedAt: (at) => { fetchedAt = at; },
 					onDeferred: (delayMs) => {
 						if (currentGeneration !== generation || afterWorkAt === undefined) return;
 						if (deferredWork) clearTimeout(deferredWork);
@@ -245,10 +249,12 @@ export default function (pi: ExtensionAPI) {
 				});
 				if (currentGeneration !== generation) return;
 				snapshot = next;
+				snapshotAt = fetchedAt;
 			} catch {
 				if (currentGeneration !== generation) return;
 				// Never display an old percentage as though it were current.
 				snapshot = undefined;
+				snapshotAt = undefined;
 			} finally {
 				if (currentGeneration === generation) {
 					controller = undefined;
@@ -277,7 +283,7 @@ export default function (pi: ExtensionAPI) {
 		show(ctx);
 		void refresh(ctx);
 		interval = setInterval(() => {
-			show(ctx); // Local time advances even while idle; redraw only changed values.
+			show(ctx); // Advance reset countdowns and hide expired windows; keep pacing at measurement time.
 			void refresh(ctx); // Read the shared cache; its account-wide cooldown limits requests.
 		}, TICK_MS);
 		interval.unref?.();
