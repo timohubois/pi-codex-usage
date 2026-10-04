@@ -26,9 +26,11 @@ Budget balances, warning colors, rates, and hints are calculated at the time of 
 
 Hints use the unrounded balance. Multi-day times show days and hours, truncating minutes. Shorter times show hours/minutes or minutes; pause times round up to a minute, continue times round down. Durations below a minute show `<1m`.
 
-Recent rates use at least 5 minutes of positive usage observations from the last 30 minutes. They are discarded after 30 minutes without an observed increase for the weekly window, or 10 minutes for the five-hour window. The longer weekly freshness limit accommodates whole-percentage readings that can stay unchanged during active use. Rates are also discarded when a window changes, usage decreases, or history is insufficient; the 30-minute history limit still applies. Roughly on/below-budget limits then use `C≤…`; over-budget limits use `P≈…` without needing history.
+Each limit keeps just one comparison point (percentage and timestamp), the last observed increase time, and its latest rate alongside the current snapshot—not a measurement list. A new rate needs at least 5 minutes between the comparison point and a positive consumption reading. After calculating a rate, that reading becomes the next comparison point. Frequent readings accumulate until a suitable interval exists; unchanged readings retain the latest usable estimate without refreshing its observation time. Comparison points older than 30 minutes are replaced with the previous measurement, and gaps longer than 30 minutes restart the comparison.
 
-Rates include all account consumption over wall-clock time, including idle gaps. They do not measure individual agents or active working time. Provider rounding and bursty workloads limit their accuracy. No extra requests are made to collect history.
+Rates expire after 30 minutes without an observed increase for the weekly window, or 10 minutes for the five-hour window. The longer weekly freshness limit accommodates whole-percentage readings that can stay unchanged during active use. Resets, usage decreases, or missing windows restart the comparison and clear the rate. Roughly on/below-budget limits without a usable rate use `C≤…`; over-budget limits use `P≈…` without needing a rate.
+
+Rates include all account consumption over wall-clock time, including idle gaps. They do not measure individual agents or active working time. Provider rounding and bursty workloads limit their accuracy. No extra requests are made to calculate rates.
 
 ## Refresh and storage
 
@@ -38,6 +40,6 @@ Rates include all account consumption over wall-clock time, including idle gaps.
 - Failed requests hide usage and obey the relevant cooldown. Expired limits stay hidden until fresh data arrives.
 - `PI_OFFLINE=1` disables usage requests and cache refreshes.
 
-Cache files live in `$XDG_CACHE_HOME/pi-codex-usage`, or `~/.cache/pi-codex-usage`. They contain usage snapshots and up to 30 minutes of history. Filenames hash the account ID; OAuth tokens are not stored.
+Cache files live in `$XDG_CACHE_HOME/pi-codex-usage`, or `~/.cache/pi-codex-usage`. They contain the latest usage snapshot and at most one compact comparison record per limit. Storage does not grow with the number of requests. Legacy measurement lists are discarded on the next cache access under the account lock, without bypassing request cooldowns. Filenames hash the account ID; OAuth tokens are not stored.
 
 A disk lock coordinates requests per account. Sessions sharing the directory see new data within a minute; sessions on different machines do not share these limits. Idle polling makes roughly 12 requests/hour per account. Frequent completed runs can raise that to at most one request/minute.

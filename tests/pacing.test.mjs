@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { budgetBalance } from "../extensions/codex-usage.ts";
-import { actionHint, budgetWarning, HISTORY_MS, withRecentRates } from "../lib/pacing.ts";
+import { actionHint, budgetWarning, updateRecentRates } from "../lib/pacing.ts";
 
 const hour = 3_600_000;
 const now = Date.parse("2026-10-02T20:00:00Z");
@@ -71,45 +71,73 @@ test("weekly hints retain rates for 30 minutes; five-hour hints retain them for 
 	}
 });
 
-test("weekly history tolerates unchanged readings longer than five-hour history", () => {
-	const current = { weekly, fiveHour };
-	const sample = (at, usedPercent) => ({ at, snapshot: {
-		weekly: { ...weekly, usedPercent }, fiveHour: { ...fiveHour, usedPercent },
-	} });
-	const history = [sample(now - 30 * 60_000, 39), sample(now - 20 * 60_000, 40)];
-	const result = withRecentRates(current, history, now);
-	assert.equal(result.weekly.recentRate.percentPerHour, 2);
-	assert.equal(result.weekly.recentRate.observedAt, now - 20 * 60_000);
-	assert.match(hint(result.weekly), /^\(C≈/);
-	assert.equal(result.fiveHour.recentRate, undefined);
-	// A longer freshness limit does not bypass resets, corrections, or insufficient history.
-	assert.equal(withRecentRates(current, [sample(now - 30 * 60_000, 41)], now).weekly.recentRate, undefined);
-	const reset = sample(now - 30 * 60_000, 39);
-	reset.snapshot.weekly.resetAt -= hour;
-	assert.equal(withRecentRates(current, [reset], now).weekly.recentRate, undefined);
-	assert.equal(withRecentRates(current, [sample(now - HISTORY_MS - 1, 39)], now).weekly.recentRate, undefined);
+function tracker() {
+	let previous;
+	let comparisons = {};
+	return (snapshot, at) => {
+		const result = updateRecentRates(snapshot, previous, comparisons, at);
+		previous = { at, snapshot: result.snapshot };
+		comparisons = result.comparisons;
+		return result;
+	};
+}
+const both = (usedPercent) => ({ weekly: { ...weekly, usedPercent }, fiveHour: { ...fiveHour, usedPercent } });
+
+test("compact comparisons retain weekly estimates longer than five-hour estimates", () => {
+	const update = tracker();
+	update(both(39), now - 25 * 60_000);
+	update(both(40), now - 20 * 60_000);
+	const result = update(both(40), now);
+	assert.equal(result.snapshot.weekly.recentRate.percentPerHour, 12);
+	assert.equal(result.snapshot.weekly.recentRate.observedAt, now - 20 * 60_000);
+	assert.match(hint(result.snapshot.weekly), /^\(C≈/);
+	assert.equal(result.snapshot.fiveHour.recentRate, undefined);
+	assert.equal(update(both(40), now + 11 * 60_000).snapshot.weekly.recentRate, undefined);
 });
 
-test("rates need five minutes of positive consumption and are shared across both limits", () => {
-	const current = { weekly: { ...weekly, usedPercent: 40 }, fiveHour: { ...fiveHour, usedPercent: 40 } };
-	const sample = (at, weeklyUsed, shortUsed) => ({ at, snapshot: {
-		weekly: { ...weekly, usedPercent: weeklyUsed }, fiveHour: { ...fiveHour, usedPercent: shortUsed },
-	} });
-	assert.deepEqual(withRecentRates(current, [], now), current);
-	assert.deepEqual(withRecentRates(current, [sample(now - 60_000, 39, 35)], now), current);
-	const result = withRecentRates(current, [sample(now - 5 * 60_000, 39, 35)], now);
-	assert.equal(result.weekly.recentRate.percentPerHour, 12);
-	assert.equal(result.fiveHour.recentRate.percentPerHour, 60);
-	assert.equal(result.weekly.recentRate.observedAt, now);
-	assert.deepEqual(withRecentRates(current, [sample(now - 5 * 60_000, 40, 40)], now), current);
-	assert.deepEqual(withRecentRates(current, [sample(now - HISTORY_MS - 1, 39, 35)], now), current);
+test("rates accumulate frequent readings until five minutes of positive consumption", () => {
+	const update = tracker();
+	assert.deepEqual(update(both(35), now).snapshot, both(35));
+	assert.deepEqual(update(both(36), now + 60_000).snapshot, both(36));
+	update(both(37), now + 2 * 60_000);
+	update(both(38), now + 3 * 60_000);
+	update(both(39), now + 4 * 60_000);
+	const result = update(both(40), now + 5 * 60_000);
+	for (const key of ["weekly", "fiveHour"]) {
+		assert.equal(result.snapshot[key].recentRate.percentPerHour, 60);
+		assert.equal(result.snapshot[key].recentRate.observedAt, now + 5 * 60_000);
+		assert.deepEqual(result.comparisons[key], { at: now + 5 * 60_000, usedPercent: 40, lastIncreaseAt: now + 5 * 60_000 });
+	}
+	// Unchanged readings retain the latest estimate, but do not refresh its observation time.
+	const unchanged = update(both(40), now + 10 * 60_000);
+	assert.deepEqual(unchanged.snapshot.weekly.recentRate, result.snapshot.weekly.recentRate);
+	const next = update(both(41), now + 15 * 60_000);
+	assert.equal(next.snapshot.weekly.recentRate.percentPerHour, 6); // Includes the idle gap.
 });
 
-test("resets, decreases, missing windows, and prolonged idle time invalidate rate history", () => {
-	const current = { fiveHour };
-	const older = (usedPercent, at = now - 10 * 60_000, resetAt = fiveHour.resetAt) => ({ at, snapshot: { fiveHour: { ...fiveHour, usedPercent, resetAt } } });
-	assert.deepEqual(withRecentRates(current, [older(90)], now), current);
-	assert.deepEqual(withRecentRates(current, [older(30, now - 10 * 60_000, now - hour)], now), current);
-	assert.deepEqual(withRecentRates(current, [older(30), { at: now - 5 * 60_000, snapshot: { weekly } }], now), current);
-	assert.deepEqual(withRecentRates(current, [older(30, now - 30 * 60_000), older(40, now - 20 * 60_000)], now), current);
+test("resets, corrections, missing windows, clock rollback, and long gaps restart comparisons", () => {
+	for (const change of [
+		(previous) => { previous.snapshot.fiveHour.usedPercent = 90; },
+		(previous) => { previous.snapshot.fiveHour.resetAt -= hour; },
+		(previous) => { previous.snapshot.fiveHour.durationSeconds += 1; },
+		(previous) => { previous.snapshot = { weekly }; },
+		(previous) => { previous.at = now + 60_000; },
+		(previous) => { previous.at = now - 31 * 60_000; },
+	]) {
+		const previous = { at: now - 5 * 60_000, snapshot: { fiveHour: rated({ ...fiveHour, usedPercent: 30 }, 20) } };
+		change(previous);
+		const result = updateRecentRates({ fiveHour }, previous, { fiveHour: { at: now - 5 * 60_000, usedPercent: 30 } }, now);
+		assert.deepEqual(result.snapshot, { fiveHour });
+		assert.deepEqual(result.comparisons, { fiveHour: { at: now, usedPercent: 40 } });
+	}
+	assert.deepEqual(updateRecentRates({}, { at: now - 60_000, snapshot: both(40) }, {}, now), { snapshot: {}, comparisons: {} });
+});
+
+test("old comparison points expire without losing the latest measurement", () => {
+	const update = tracker();
+	update(both(39), now - 40 * 60_000);
+	update(both(39), now - 10 * 60_000);
+	const result = update(both(40), now);
+	assert.equal(result.snapshot.weekly.recentRate.percentPerHour, 6);
+	assert.equal(result.snapshot.fiveHour.recentRate.percentPerHour, 6);
 });

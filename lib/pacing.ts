@@ -1,6 +1,6 @@
 import type { UsageSnapshot, UsageWindow } from "../extensions/codex-usage.ts";
 
-export const HISTORY_MS = 30 * 60_000;
+const MAX_COMPARISON_MS = 30 * 60_000;
 const MIN_SAMPLE_MS = 5 * 60_000;
 function rateMaxAge(window: UsageWindow): number {
 	// Weekly readings can stay unchanged during active use due to whole-percent rounding.
@@ -9,39 +9,54 @@ function rateMaxAge(window: UsageWindow): number {
 		: 10 * 60_000;
 }
 export type UsageSample = { at: number; snapshot: UsageSnapshot };
+export type RateComparison = { at: number; usedPercent: number; lastIncreaseAt?: number };
+export type RateComparisons = Partial<Record<keyof UsageSnapshot, RateComparison>>;
 
-/** Rates are account-wide allowance consumption over wall-clock time, not tokens or guaranteed work time. */
-export function withRecentRates(snapshot: UsageSnapshot, history: UsageSample[], now: number): UsageSnapshot {
+function usableRate(window: UsageWindow, now: number): boolean {
+	const rate = window.recentRate;
+	return !!rate && Number.isFinite(rate.percentPerHour) && rate.percentPerHour > 0 &&
+		Number.isFinite(rate.observedAt) && rate.observedAt <= now && now - rate.observedAt <= rateMaxAge(window);
+}
+
+/** Keep one comparison per limit instead of a measurement history. Rates include account-wide idle time. */
+export function updateRecentRates(
+	snapshot: UsageSnapshot,
+	previous: UsageSample | undefined,
+	comparisons: RateComparisons,
+	now: number,
+): { snapshot: UsageSnapshot; comparisons: RateComparisons } {
 	const result: UsageSnapshot = {};
+	const next: RateComparisons = {};
 	for (const key of ["weekly", "fiveHour"] as const) {
 		const window = snapshot[key];
 		if (!window) continue;
 		const { recentRate: _oldRate, ...raw } = window;
 		result[key] = raw;
-		const samples = history.filter((sample) => Number.isFinite(sample.at) && sample.at <= now && now - sample.at <= HISTORY_MS);
-		let oldest: UsageSample | undefined;
-		let previousUsed = window.usedPercent;
-		let previousAt = now;
-		let lastIncreaseAt: number | undefined;
-		// Walk back only through the uninterrupted current window; resets and usage corrections break the chain.
-		for (let i = samples.length - 1; i >= 0; i--) {
-			const sample = samples[i];
-			const older = sample.snapshot[key];
-			if (sample.at >= previousAt) continue;
-			if (!older) break;
-			if (older.durationSeconds !== window.durationSeconds || Math.abs(older.resetAt - window.resetAt) > 60_000 || older.usedPercent > previousUsed) break;
-			if (lastIncreaseAt === undefined && older.usedPercent < previousUsed) lastIncreaseAt = previousAt;
-			oldest = sample;
-			previousUsed = older.usedPercent;
-			previousAt = sample.at;
+		next[key] = { at: now, usedPercent: window.usedPercent };
+		const older = previous?.snapshot[key];
+		if (!previous || !older || !Number.isFinite(previous.at) || previous.at >= now ||
+			now - previous.at > MAX_COMPARISON_MS || older.durationSeconds !== window.durationSeconds ||
+			Math.abs(older.resetAt - window.resetAt) > 60_000 || older.usedPercent > window.usedPercent) continue;
+
+		let comparison = comparisons[key];
+		if (!comparison || !Number.isFinite(comparison.at) || comparison.at > previous.at ||
+			now - comparison.at > MAX_COMPARISON_MS || !Number.isFinite(comparison.usedPercent) ||
+			comparison.usedPercent < 0 || comparison.usedPercent > older.usedPercent) {
+			comparison = { at: previous.at, usedPercent: older.usedPercent };
 		}
-		if (!oldest || lastIncreaseAt === undefined || now - lastIncreaseAt > rateMaxAge(window)) continue;
-		const elapsed = now - oldest.at;
-		const increase = window.usedPercent - oldest.snapshot[key]!.usedPercent;
-		if (elapsed < MIN_SAMPLE_MS || increase <= 0) continue;
+		const lastIncreaseAt = window.usedPercent > older.usedPercent ? now : comparison.lastIncreaseAt;
+		next[key] = { ...comparison, lastIncreaseAt };
+		// Reuse the last estimate until a new interval has enough time and positive consumption.
+		if (usableRate(older, now)) result[key] = { ...raw, recentRate: older.recentRate };
+		const elapsed = now - comparison.at;
+		const increase = window.usedPercent - comparison.usedPercent;
+		if (elapsed < MIN_SAMPLE_MS || increase <= 0 || lastIncreaseAt === undefined ||
+			!Number.isFinite(lastIncreaseAt) || lastIncreaseAt > now || now - lastIncreaseAt > rateMaxAge(window)) continue;
 		result[key] = { ...raw, recentRate: { percentPerHour: increase * 3_600_000 / elapsed, observedAt: lastIncreaseAt } };
+		// Start the next comparison interval; storage stays constant regardless of request frequency.
+		next[key] = { at: now, usedPercent: window.usedPercent, lastIncreaseAt };
 	}
-	return result;
+	return { snapshot: result, comparisons: next };
 }
 
 function hintTime(milliseconds: number, roundUp: boolean): string {
@@ -76,8 +91,7 @@ export function actionHint(window: UsageWindow, balance: number, now: number): s
 		return `(P≈${hintTime(pause, true)})`;
 	}
 	const rate = window.recentRate;
-	if (!rate || !Number.isFinite(rate.percentPerHour) || rate.percentPerHour <= 0 ||
-		!Number.isFinite(rate.observedAt) || now < rate.observedAt || now - rate.observedAt > rateMaxAge(window)) {
+	if (!rate || !usableRate(window, now)) {
 		// A conditional reset horizon, not an observed-rate forecast.
 		return `(C≤${hintTime(remaining, false)})`;
 	}

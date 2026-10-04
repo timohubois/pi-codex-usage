@@ -91,7 +91,7 @@ test("in-flight requests do not leave a fresh-looking old snapshot forever", asy
 	assert.equal(await sharedUsage("account", async () => assert.fail("Still in cooldown"), { directory, now: clock }), undefined);
 });
 
-test("recent rates are persisted and reused across sessions without extra requests", async (t) => {
+test("compact rates are persisted and reused across sessions without extra requests", async (t) => {
 	const directory = await temporary(t);
 	const start = Date.now();
 	let requests = 0;
@@ -102,10 +102,56 @@ test("recent rates are persisted and reused across sessions without extra reques
 		return { fiveHour: { ...short, usedPercent: 40 } };
 	}, { directory, now: start + POLL_MS });
 	assert.equal(fetched.fiveHour.recentRate.percentPerHour, 30);
-	const reused = await sharedUsage("account", async () => assert.fail("Must reuse shared history"), { directory, now: start + POLL_MS + 60_000 });
+	const reused = await sharedUsage("account", async () => assert.fail("Must reuse shared estimate"), { directory, now: start + POLL_MS + 60_000 });
 	assert.deepEqual(reused, fetched);
 	assert.equal(requests, 2);
 	const [filename] = await readdir(directory);
 	const cache = JSON.parse(await readFile(join(directory, filename), "utf8"));
-	assert.equal(cache.history.length, 2);
+	assert.equal(Object.hasOwn(cache, "history"), false);
+	assert.deepEqual(cache.comparisons, { fiveHour: { at: start + POLL_MS, usedPercent: 40, lastIncreaseAt: start + POLL_MS } });
+	assert.deepEqual(cache.snapshot.fiveHour.recentRate, fetched.fiveHour.recentRate);
+});
+
+test("frequent fetches keep only one comparison per limit", async (t) => {
+	const directory = await temporary(t);
+	const start = Date.now();
+	for (let i = 0; i < 70; i++) {
+		await sharedUsage("account", async () => ({
+			weekly: { ...snapshot.weekly, usedPercent: 40 + i / 10 },
+			fiveHour: { ...snapshot.weekly, durationSeconds: 18000, usedPercent: 40 + i / 10 },
+		}), { directory, now: start + i * 60_000, afterWorkAt: start + i * 60_000 });
+	}
+	const [filename] = await readdir(directory);
+	const contents = await readFile(join(directory, filename), "utf8");
+	const cache = JSON.parse(contents);
+	assert.deepEqual(Object.keys(cache).sort(), ["attemptedAt", "comparisons", "fetchedAt", "snapshot"]);
+	assert.deepEqual(Object.keys(cache.comparisons).sort(), ["fiveHour", "weekly"]);
+	for (const comparison of Object.values(cache.comparisons)) {
+		assert.deepEqual(Object.keys(comparison).sort(), ["at", "lastIncreaseAt", "usedPercent"]);
+	}
+	assert.ok(contents.length < 1000);
+	assert.ok(!contents.includes("history"));
+});
+
+test("legacy histories are removed on cache reuse without an extra request", async (t) => {
+	const directory = await temporary(t);
+	const key = createHash("sha256").update("account").digest("hex");
+	const path = join(directory, `${key}.json`);
+	const clock = Date.now();
+	await writeFile(path, JSON.stringify({
+		attemptedAt: clock, fetchedAt: clock, snapshot,
+		history: Array.from({ length: 31 }, (_, i) => ({ at: clock - i * 60_000, snapshot })),
+	}));
+	assert.deepEqual(await sharedUsage("account", async () => assert.fail("Migration must honor cooldown"), {
+		directory, now: clock + 60_000,
+	}), snapshot);
+	const migrated = JSON.parse(await readFile(path, "utf8"));
+	assert.equal(Object.hasOwn(migrated, "history"), false);
+	assert.equal(Object.hasOwn(migrated, "needsMigration"), false);
+	assert.equal(migrated.attemptedAt, clock);
+	assert.equal(migrated.fetchedAt, clock);
+	const fetched = await sharedUsage("account", async () => ({ weekly: { ...snapshot.weekly, usedPercent: 41 } }), {
+		directory, now: clock + POLL_MS,
+	});
+	assert.equal(fetched.weekly.recentRate.percentPerHour, 12);
 });
