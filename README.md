@@ -3,7 +3,7 @@
 Codex allowance and pacing hints above the [Pi](https://pi.dev/) editor.
 
 ```text
-W40% R3d12h B+10% (C≈1d0h)
+W40% R3d12h B+10.0% (C≈1d0h)
 ```
 
 ## Install
@@ -31,15 +31,15 @@ The budget assumes spreading your allowance evenly between resets.
 | `W40%` | 40% of the weekly allowance used |
 | `5H80%` | 80% of the 5-hour allowance used |
 | `R3d12h` | Resets in 3 days, 12 hours |
-| `B+10%` | 10 percentage points below an even usage budget |
+| `B+10.0%` | 10 percentage points below an even usage budget |
 | `B0%` | Roughly on pace—not a signal to stop |
-| `B-30%` | 30 percentage points over budget |
+| `B-30.0%` | 30 percentage points over budget |
 | `(C≈1d0h)` | Estimated time to continue at the recent account-wide consumption rate before going over budget |
 | `(C≤6d23h)` | No usable rate yet: potentially until reset, if usage stays within budget |
 | `(S)` | Recent consumption is too fast to stay on pace |
 | `(P≈1h30m)` | Pausing account-wide usage for about this long would restore pace |
 
-Halfway through a window, 50% usage is on pace. Using 40% gives `B+10%`; using 80% gives `B-30%`.
+Halfway through a window, 50% usage is on pace. Using 40% gives `B+10.0%`; using 80% gives `B-30.0%`. Balances show one decimal place; values rounding to zero show `B0%`.
 
 Usage turns yellow above 70% and red above 90%. A negative `B` turns yellow when lasting until reset needs at least a 20% slowdown from the planned rate—not for every small deficit.
 

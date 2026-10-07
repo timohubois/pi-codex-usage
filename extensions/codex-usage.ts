@@ -90,8 +90,8 @@ export function budgetBalance(window: UsageWindow, now: number): number | undefi
 }
 
 export function displayBalance(balance: number): string {
-	const magnitude = Math.round(Math.abs(balance));
-	if (magnitude === 0) return "B0%"; // Avoid signed zero after rounding.
+	const magnitude = (Math.round(Math.abs(balance) * 10) / 10).toFixed(1);
+	if (magnitude === "0.0") return "B0%"; // Avoid signed zero after rounding.
 	return `B${balance < 0 ? "-" : "+"}${magnitude}%`;
 }
 

@@ -9,7 +9,7 @@ planned usage = elapsed time / window duration × 100
 budget balance = planned usage − actual usage
 ```
 
-`B` rounds to whole percentage points. Differences smaller than half a point show `B0%`, without a plus or minus sign.
+`B` rounds to one decimal place. Differences smaller than 0.05 percentage points show `B0%`, without a plus or minus sign. This is calculated budget precision, not extra precision in the provider's usage reading. Warning and pacing thresholds still use whole-point rounding.
 
 For negative displayed balances, yellow means the remaining allowance requires at least a 20% reduction from the evenly planned consumption rate to last until reset. This is equivalent to having no more than 80% of the allowance that an even plan would leave at this point. Smaller deficits stay dim. The threshold is a planning heuristic, not a provider rule.
 
@@ -19,7 +19,7 @@ For negative displayed balances, yellow means the remaining allowance requires a
 | --- | --- |
 | `C≈…` | Spare budget divided by the amount recent consumption exceeds the planned rate. If consumption is sustainable, use time until reset. Cap at reset and allowance exhaustion. |
 | `C≤…` | Time until reset when no usable rate exists, conditional on staying within budget—not an observed-rate forecast. |
-| `S` | Rounded balance is zero, but the measured consumption rate exceeds the planned rate. |
+| `S` | Balance rounded to whole points is zero, but the measured consumption rate exceeds the planned rate. |
 | `P≈…` | Budget deficit divided by the planned rate, assuming no further account usage. Exhausted allowance also gets a pause hint. |
 
 Budget balances, warning colors, rates, and hints are calculated at the time of the latest successful usage fetch and stay unchanged until another successful fetch, even if the reported percentage is unchanged. Sessions reusing shared data use that same measurement time. Only reset countdowns advance between measurements; expired windows are hidden.
