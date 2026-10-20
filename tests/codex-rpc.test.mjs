@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,11 +8,12 @@ import extension, { parseUsage } from "../extensions/codex-usage.ts";
 
 async function fixture(t) {
 	const directory = await mkdtemp(join(tmpdir(), "pi-codex-rpc-"));
-	const keys = ["CODEX_HOME", "XDG_CACHE_HOME", "PATH", "FAKE_CODEX_MODE", "PI_OFFLINE"];
+	const keys = ["CODEX_HOME", "XDG_CACHE_HOME", "PATH", "FAKE_CODEX_MODE", "FAKE_CODEX_REQUESTS", "PI_OFFLINE"];
 	const env = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 	process.env.CODEX_HOME = join(directory, "auth");
 	process.env.XDG_CACHE_HOME = join(directory, "cache");
 	process.env.PATH = `${directory}:${process.env.PATH}`;
+	process.env.FAKE_CODEX_REQUESTS = join(directory, "requests");
 	delete process.env.FAKE_CODEX_MODE;
 	delete process.env.PI_OFFLINE;
 	await mkdir(process.env.CODEX_HOME);
@@ -21,6 +22,7 @@ async function fixture(t) {
 	await saveAuth({ auth_mode: "chatgpt", tokens: { account_id: "cli-account" } });
 	await writeFile(join(directory, "codex"), `#!/usr/bin/env node
 import { createInterface } from 'node:readline';
+import { appendFileSync } from 'node:fs';
 if (process.argv.slice(2).join(' ') !== '-s read-only -a on-request app-server') process.exit(1);
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 createInterface({ input: process.stdin }).on('line', line => {
@@ -30,6 +32,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   send({id:1,result:{}});
  }
  if (m.method === 'account/rateLimits/read') {
+  appendFileSync(process.env.FAKE_CODEX_REQUESTS, 'request\\n');
   const mode = process.env.FAKE_CODEX_MODE;
   if (mode === 'hang') return;
   if (mode === 'exit') return process.exit(1);
@@ -138,6 +141,53 @@ test("new OpenAI login preserves the existing display, shares cached data, and c
 	first.ctx.modelRegistry.isUsingOAuth = () => false;
 	first.handlers.get("model_select")({}, first.ctx);
 	assert.equal(first.status(), undefined); // API keys show no subscription widget.
+});
+
+test("reload during a pending RPC recovers on the next minute tick without clearing the cache", async (t) => {
+	await fixture(t);
+	const originalInterval = globalThis.setInterval;
+	const originalNow = Date.now;
+	let clock = Date.now();
+	let tick;
+	globalThis.setInterval = (callback) => { tick = callback; return { unref() {} }; };
+	Date.now = () => clock;
+	const handlers = new Map();
+	extension({ on: (name, handler) => handlers.set(name, handler) });
+	let widget;
+	const ctx = {
+		mode: "tui", model: { provider: "openai" },
+		modelRegistry: { isUsingOAuth: () => true },
+		ui: { setWidget: (_key, factory) => {
+			widget = factory?.({ requestRender() {} }, { fg: (_color, text) => text });
+		} },
+	};
+	t.after(() => {
+		handlers.get("session_shutdown")({}, ctx);
+		globalThis.setInterval = originalInterval;
+		Date.now = originalNow;
+	});
+	async function waitFor(condition) {
+		for (let i = 0; i < 100; i++) {
+			if (await condition()) return;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.fail("Timed out waiting for recovery");
+	}
+	process.env.FAKE_CODEX_MODE = "hang";
+	handlers.get("session_start")({}, ctx);
+	await waitFor(async () => readFile(process.env.FAKE_CODEX_REQUESTS, "utf8").then(() => true, () => false));
+	assert.equal(widget, undefined);
+	handlers.get("session_shutdown")({}, ctx); // Reload aborts the in-flight RPC.
+	await waitFor(async () => !(await readdir(process.env.XDG_CACHE_HOME + "/pi-codex-usage")).some((name) => name.endsWith(".lock")));
+	process.env.FAKE_CODEX_MODE = "success";
+	handlers.get("session_start")({}, ctx);
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.equal(widget, undefined); // No immediate retry storm after reload.
+	assert.equal(await readFile(process.env.FAKE_CODEX_REQUESTS, "utf8"), "request\n");
+	clock += 60_000;
+	tick();
+	await waitFor(() => widget?.render(150)[0].trimStart().startsWith("W40%"));
+	assert.equal(await readFile(process.env.FAKE_CODEX_REQUESTS, "utf8"), "request\nrequest\n");
 });
 
 test("usage widgets and requests remain terminal-only", async () => {

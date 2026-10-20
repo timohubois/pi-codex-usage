@@ -182,10 +182,10 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	assert.equal(requests, 3);
 	assert.equal(first.widget(), undefined);
 	assert.equal(second.widget(), undefined);
-	clock += 60_000;
+	clock += 30_000;
 	for (const tick of ticks) tick();
 	await flush();
-	assert.equal(requests, 3); // Failed requests also observe the cooldown.
+	assert.equal(requests, 3); // Failed requests still obey a one-minute cooldown.
 	fail = false;
 	clock = now + 2.5 * 3_600_000;
 	for (const tick of ticks) tick();

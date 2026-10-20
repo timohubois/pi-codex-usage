@@ -101,7 +101,8 @@ export async function sharedUsage(
 	function reuse(record: CacheRecord | undefined): boolean {
 		if (!record) return false;
 		const coversWork = options.afterWorkAt !== undefined && record.attemptedAt >= options.afterWorkAt;
-		const cooldown = options.afterWorkAt === undefined || coversWork ? POLL_MS : WORK_COOLDOWN_MS;
+		// A failed/cancelled first request must not leave every session blank for five minutes.
+		const cooldown = record.snapshot && (options.afterWorkAt === undefined || coversWork) ? POLL_MS : WORK_COOLDOWN_MS;
 		const age = now - record.attemptedAt;
 		if (age < 0 || age >= cooldown) return false;
 		if (options.afterWorkAt !== undefined && !coversWork) options.onDeferred?.(cooldown - age);

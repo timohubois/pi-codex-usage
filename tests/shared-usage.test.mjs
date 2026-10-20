@@ -31,11 +31,11 @@ test("shares successful usage, isolates accounts, and throttles failures", async
 	assert.equal(requests, 3);
 	const failed = async () => { requests++; throw new Error("HTTP 503"); };
 	assert.equal(await sharedUsage("account-one", failed, options(2 * POLL_MS)), undefined);
-	assert.equal(await sharedUsage("account-one", fetchUsage, options(2 * POLL_MS + 60_000)), undefined);
+	assert.equal(await sharedUsage("account-one", fetchUsage, options(2 * POLL_MS + 30_000)), undefined);
 	assert.equal(requests, 4);
-	assert.deepEqual(await sharedUsage("account-one", fetchUsage, options(3 * POLL_MS)), snapshot);
+	assert.deepEqual(await sharedUsage("account-one", fetchUsage, options(2 * POLL_MS + 60_000)), snapshot);
 	assert.equal(requests, 5);
-	assert.deepEqual(measurementTimes, [start, start, start, start + POLL_MS, start + 3 * POLL_MS]);
+	assert.deepEqual(measurementTimes, [start, start, start, start + POLL_MS, start + 2 * POLL_MS + 60_000]);
 	for (const filename of await readdir(directory)) {
 		assert.match(filename, /^[a-f0-9]{64}\.json$/);
 		assert.doesNotMatch(await readFile(join(directory, filename), "utf8"), /account-one|account-two|Bearer/);

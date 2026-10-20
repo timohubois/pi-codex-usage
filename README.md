@@ -58,7 +58,7 @@ Usage turns yellow above 70% and red above 90%. A negative `B` turns yellow when
 ## Updates
 
 - Reset countdowns and the shared cache are checked every minute, including while idle. Budget balance, rates, and hints update only with a new usage measurement.
-- Background requests have a 5-minute cooldown; completed runs use a 1-minute cooldown.
+- Background requests have a 5-minute cooldown; completed runs and failed requests use a 1-minute cooldown.
 - Sessions on the same machine share the account cache and request limits. The cache keeps only the latest snapshot and one comparison record per limit, not a measurement history.
 
 Live metrics show only available, unexpired limits. Legacy `openai-codex` models use Pi's credentials and the undocumented ChatGPT usage endpoint; new `openai` subscription models use the Codex CLI as described above. There are no commands or notifications. Upstream usage APIs may change.

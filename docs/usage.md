@@ -41,7 +41,7 @@ The display is unchanged for both login paths. For the new login, limits belong 
 - Every minute: update reset countdowns, hide expired windows, and read shared state. Recalculate pacing only for a new measurement. Redraw only changed values.
 - Background checks, startup, reload, and model changes: fetch only if the last account-wide attempt was at least 5 minutes ago.
 - After `agent_settled`: use a 1-minute request cooldown. Queue a refresh if necessary; another session's request after that work finished satisfies it too.
-- Failed requests hide usage and obey the relevant cooldown. Expired limits stay hidden until fresh data arrives.
+- Failed or cancelled requests hide usage and use a 1-minute cooldown, so the next minute tick can retry without waiting five minutes. Expired limits stay hidden until fresh data arrives.
 - `PI_OFFLINE=1` disables usage requests and cache refreshes.
 
 Cache files live in `$XDG_CACHE_HOME/pi-codex-usage`, or `~/.cache/pi-codex-usage`. They contain the latest usage snapshot and at most one compact comparison record per limit. Storage does not grow with the number of requests. Legacy measurement lists are discarded on the next cache access under the account lock, without bypassing request cooldowns. Filenames hash the account ID; OAuth tokens are not stored.
