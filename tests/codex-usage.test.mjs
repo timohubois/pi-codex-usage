@@ -62,7 +62,7 @@ const plain = (text) => text?.replaceAll(/\[(?:warning|error)\]/g, "");
 
 test("idle sessions share requests, update each minute, and explicitly redraw", async (t) => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-codex-extension-"));
-	const original = { fetch: globalThis.fetch, setInterval: globalThis.setInterval, now: Date.now, cache: process.env.XDG_CACHE_HOME };
+	const original = { fetch: globalThis.fetch, setInterval: globalThis.setInterval, now: Date.now, cache: process.env.XDG_CACHE_HOME, codexHome: process.env.CODEX_HOME };
 	let clock = now;
 	let requests = 0;
 	let usedPercent = 40;
@@ -70,6 +70,7 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	const ticks = [];
 	const sessions = [];
 	process.env.XDG_CACHE_HOME = directory;
+	process.env.CODEX_HOME = join(directory, "no-codex-login");
 	Date.now = () => clock;
 	globalThis.setInterval = (callback, ms) => {
 		assert.equal(ms, 60_000);
@@ -90,6 +91,8 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 		Date.now = original.now;
 		if (original.cache === undefined) delete process.env.XDG_CACHE_HOME;
 		else process.env.XDG_CACHE_HOME = original.cache;
+		if (original.codexHome === undefined) delete process.env.CODEX_HOME;
+		else process.env.CODEX_HOME = original.codexHome;
 		await rm(directory, { recursive: true, force: true });
 	});
 	function session() {
@@ -200,6 +203,12 @@ test("idle sessions share requests, update each minute, and explicitly redraw", 
 	assert.equal(requests, 5);
 	assert.equal(first.widget(), undefined); // Both expired: no placeholders or reserved row.
 	assert.equal(second.widget(), undefined);
+	first.ctx.modelRegistry.isUsingOAuth = () => true;
+	first.ctx.model = { provider: "openai" };
+	first.handlers.get("model_select")({}, first.ctx);
+	await flush();
+	assert.equal(first.widget(), undefined);
+	assert.equal(requests, 5); // Never send the new provider's credentials to the legacy endpoint.
 	first.ctx.model = { provider: "another" };
 	first.handlers.get("model_select")({}, first.ctx);
 	await flush();

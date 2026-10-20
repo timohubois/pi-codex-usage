@@ -34,6 +34,10 @@ Rates include all account consumption over wall-clock time, including idle gaps.
 
 ## Refresh and storage
 
+These rules apply to both legacy `openai-codex` and new `openai` subscription models. Legacy models use Pi's credentials to fetch WHAM usage directly. New subscription models use the separately signed-in Codex CLI: the account ID is read from `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`), and `codex -s read-only -a on-request app-server` is launched only when the shared cache requires a fresh measurement. The extension initializes the RPC connection and calls only `account/rateLimits/read`; Codex handles credentials and refreshes. The subprocess is stopped after its reply, cancellation, or a 12-second timeout. Pi's new direct-API token is never sent to WHAM.
+
+The display is unchanged for both login paths. For the new login, limits belong to the separately signed-in Codex account; the extension cannot verify that it matches Pi's encrypted account identity. They do not report Pi's app-specific cap. Missing credentials or failed requests hide the widget. API-key sessions show no widget.
+
 - Every minute: update reset countdowns, hide expired windows, and read shared state. Recalculate pacing only for a new measurement. Redraw only changed values.
 - Background checks, startup, reload, and model changes: fetch only if the last account-wide attempt was at least 5 minutes ago.
 - After `agent_settled`: use a 1-minute request cooldown. Queue a refresh if necessary; another session's request after that work finished satisfies it too.

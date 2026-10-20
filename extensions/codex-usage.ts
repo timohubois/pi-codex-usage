@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sharedUsage } from "../lib/shared-usage.ts";
+import { codexAccountId, codexUsage } from "../lib/codex-rpc.ts";
 import { actionHint, budgetWarning } from "../lib/pacing.ts";
 
 // The endpoint is used by ChatGPT but is not a documented public API.
@@ -175,7 +176,9 @@ export default function (pi: ExtensionAPI) {
 
 	function show(ctx: ExtensionContext): void {
 		if (ctx.mode !== "tui") return;
-		setWidget(ctx, ctx.model?.provider === "openai-codex" ? metrics(Date.now()) : undefined);
+		const supported = ctx.model?.provider === "openai-codex" ||
+			(ctx.model?.provider === "openai" && ctx.modelRegistry.isUsingOAuth(ctx.model));
+		setWidget(ctx, supported ? metrics(Date.now()) : undefined);
 	}
 
 	function cancel(): void {
@@ -192,9 +195,9 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function refresh(ctx: ExtensionContext, afterWorkAt?: number): Promise<void> {
-		if (ctx.mode !== "tui" || ctx.model?.provider !== "openai-codex" || process.env.PI_OFFLINE === "1") {
-			return Promise.resolve();
-		}
+		if (ctx.mode !== "tui" || process.env.PI_OFFLINE === "1") return Promise.resolve();
+		const useCodexCli = ctx.model?.provider === "openai" && ctx.modelRegistry.isUsingOAuth(ctx.model);
+		if (ctx.model?.provider !== "openai-codex" && !useCodexCli) return Promise.resolve();
 		if (inFlight) {
 			if (afterWorkAt !== undefined) queuedWorkAt = Math.max(queuedWorkAt ?? afterWorkAt, afterWorkAt);
 			return inFlight;
@@ -209,7 +212,15 @@ export default function (pi: ExtensionAPI) {
 		const request = (async () => {
 			try {
 				let initialToken: string | undefined;
-				if (!accountId) {
+				if (useCodexCli) {
+					const id = await codexAccountId();
+					if (currentGeneration !== generation) return;
+					if (id !== accountId) {
+						snapshot = undefined;
+						snapshotAt = undefined;
+					}
+					accountId = id;
+				} else if (!accountId) {
 					initialToken = await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
 					if (currentGeneration !== generation) return;
 					accountId = initialToken && accountIdFromToken(initialToken);
@@ -219,19 +230,26 @@ export default function (pi: ExtensionAPI) {
 				let fetchedAt: number | undefined;
 				const next = await sharedUsage(id, async () => {
 					if (abort.signal.aborted) throw new Error("Usage refresh cancelled");
-					// Resolve credentials only for actual requests, not every local cache read.
-					const token = initialToken ?? await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
-					if (!token || accountIdFromToken(token) !== id) throw new Error("Codex account changed");
-					const response = await fetch(USAGE_URL, {
-						headers: {
-							Authorization: `Bearer ${token}`,
-							"ChatGPT-Account-Id": id,
-							Accept: "application/json",
-						},
-						signal: AbortSignal.any([abort.signal, AbortSignal.timeout(8_000)]),
-					});
-					if (!response.ok) throw new Error(`Codex usage HTTP ${response.status}`);
-					const usage = parseUsage(await response.json(), Date.now());
+					let data: unknown;
+					if (useCodexCli) {
+						data = await codexUsage(id, abort.signal);
+						if (await codexAccountId() !== id) throw new Error("Codex account changed");
+					} else {
+						// Resolve credentials only for actual requests, not every local cache read.
+						const token = initialToken ?? await ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+						if (!token || accountIdFromToken(token) !== id) throw new Error("Codex account changed");
+						const response = await fetch(USAGE_URL, {
+							headers: {
+								Authorization: `Bearer ${token}`,
+								"ChatGPT-Account-Id": id,
+								Accept: "application/json",
+							},
+							signal: AbortSignal.any([abort.signal, AbortSignal.timeout(8_000)]),
+						});
+						if (!response.ok) throw new Error(`Codex usage HTTP ${response.status}`);
+						data = await response.json();
+					}
+					const usage = parseUsage(data, Date.now());
 					if (!usage) throw new Error("Codex usage windows unavailable");
 					return usage;
 				}, {
